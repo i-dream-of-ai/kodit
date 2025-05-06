@@ -1,9 +1,25 @@
 [project]
 name = "kodit"
-version = "0.0.0"
+dynamic = ["version"]
 description = "Code indexing for better AI code generation"
 readme = "README.md"
-requires-python = ">=3.11"
+authors = [
+  {name = "Helix.ML", email = "founders@helix.ml"},
+]
+maintainers = [
+  {name = "Helix.ML", email = "founders@helix.ml"},
+]
+license = "Apache-2.0"
+keywords = ["mcp", "indexing", "rag", "ai"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Developers",
+  "Topic :: Software Development :: Code Generators",
+
+  # Specify the Python versions you support here.
+  "Programming Language :: Python :: 3.12",
+]
+requires-python = ">=3.12"
 dependencies = [
     "asgi-correlation-id>=4.3.4",
     "better-exceptions>=0.3.3",
@@ -28,12 +44,28 @@ dev = [
     "ruff>=0.11.8",
 ]
 
+[project.urls]
+Homepage = "https://docs.helixml.tech/kodit/"
+Documentation = "https://docs.helixml.tech/kodit/"
+Repository = "https://github.com/helixml/kodit.git"
+Issues = "https://github.com/helixml/kodit/issues"
+Changelog = "https://github.com/helixml/kodit/releases"
+
 [project.scripts]
 kodit = "kodit.cli:cli"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version.raw-options]
+local_scheme = "no-local-version"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/kodit/_version.py"
 
 [tool.pytest.ini_options]
 norecursedirs = ".git"
@@ -63,3 +95,16 @@ ignore = [
 ]
 select = ["ALL"]
 exclude = []
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple/"
+publish-url = "https://pypi.org/legacy/"
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+
+[tool.uv]
+package = true
