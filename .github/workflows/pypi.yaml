@@ -21,19 +21,26 @@ jobs:
     name: Bump Homebrew formula
     needs: pypi
     runs-on: ubuntu-latest
+    environment:
+      name: pypi
     permissions:
       contents: read
     steps:
+      - name: Wait for PyPI release to be available
+        run: |
+          while true; do
+            if curl -s https://pypi.io/packages/source/k/${{ github.event.repository.name }}/${{ github.event.repository.name }}-${{ github.event.release.tag_name }}.tar.gz; then
+              break
+            fi
+          done
       - uses: mislav/bump-homebrew-formula-action@v3
         with:
           formula-name: ${{ github.event.repository.name }}
           formula-path: Formula/${{ github.event.repository.name }}.rb
           homebrew-tap: ${{ github.repository_owner }}/homebrew-${{ github.event.repository.name }}
           tag-name: "${{ github.event.release.tag_name }}"
-          push-to: ${{ github.repository_owner }}/homebrew-${{ github.event.repository.name }}
-          base-branch: "main"
           download-url: "https://pypi.io/packages/source/k/${{ github.event.repository.name }}/${{ github.event.repository.name }}-${{ github.event.release.tag_name }}.tar.gz"
           commit-message: |
             {{formulaName}} {{version}}
         env:
-          COMMITTER_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMITTER_TOKEN: ${{ secrets.COMMITTER_TOKEN }}
