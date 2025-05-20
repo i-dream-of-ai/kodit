@@ -6,6 +6,14 @@ uv run python main.py \
   --output_dir ./base_datasets \
   --code_generator null
   
+
+### With Kodit
+
+uv run python main.py \
+  --dataset "princeton-nlp/SWE-bench_Lite" \
+  --output_dir ./base_datasets \
+  --code_generator kodit_local
+
 ## Prediction
 
 ### Openai example

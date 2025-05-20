@@ -11,8 +11,12 @@ import logging
 import os
 from argparse import ArgumentParser
 from pathlib import Path
+import shutil
+import subprocess
+import tempfile
 from typing import Dict, List, Optional, Union, Callable
 from datasets import Dataset, DatasetDict, load_dataset, load_from_disk
+import openai
 from tqdm.auto import tqdm
 
 from swebench.inference.make_datasets.create_instance import (
@@ -304,8 +308,8 @@ def main():
         "--code_generator",
         type=str,
         default="null",
-        choices=["null", "dummy"],
-        help="Which code generator to use. 'null' preserves original text, 'dummy' injects dummy text.",
+        choices=["null", "kodit_local"],
+        help="Which code generator to use. 'null' preserves original text, 'kodit_local' indexes the repository with kodit.",
     )
     
     args = parser.parse_args()
@@ -313,13 +317,59 @@ def main():
     def null_code_generator(instance: Dict) -> str:
         return None
 
-    def dummy_code_generator(instance: Dict) -> str:
-        return f"# Dummy code for {instance.get('repo', '')}\n# Problem: {instance.get('problem_statement', '')}\n\ndef dummy_function():\n    pass"
+    def kodit_local_generator(instance: Dict) -> str:
+        repo_name = instance["repo"]
+        base_commit = instance["base_commit"]
+        problem_statement = instance["problem_statement"]
+        hints_text = instance["hints_text"]
+        print(repo_name, base_commit, problem_statement, hints_text)
+
+        # Check if openai api key is set
+        if not os.getenv("OPENAI_API_KEY"):
+            raise ValueError("OPENAI_API_KEY is not set")
+        
+        # Check if kodit is installed
+        if not shutil.which("kodit"):
+            raise ValueError("kodit is not installed")
+
+        # Clean the kodit home directory
+        kodit_home = os.path.expanduser("~/.kodit")
+        if os.path.exists(kodit_home):
+            shutil.rmtree(kodit_home)
+
+        # First clone the repository into a temporary directory
+        with tempfile.TemporaryDirectory() as repo_dir:
+            repo_url = f"https://github.com/{repo_name}.git"
+            # Then clone the repo at the base commit
+            subprocess.run(["git", "clone", repo_url, repo_dir])
+            # Now checkout the specific commit
+            subprocess.run(["git", "checkout", base_commit], cwd=repo_dir)
+
+            # Run kodit
+            subprocess.run(["kodit", "--disable-telemetry", "index", repo_dir])
+
+            # Use openai to generate keywords from the problem statement
+            keywords = openai.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that generates keywords from a problem statement."},
+                    {"role": "user", "content": f"Generate keywords from the following problem statement: {problem_statement}"}
+                ]
+            )
+            if not keywords.choices:
+                raise ValueError("No keywords generated")
+            keywords = str(keywords.choices[0].message.content)
+
+            # Use kodit to retrieve the files
+            results = subprocess.run(["kodit", "--disable-telemetry", "retrieve", keywords], capture_output=True, text=True)
+            
+            # Return that raw text
+            return results.stdout
 
     # Dictionary of available code generators
     CODE_GENERATORS = {
-        "null": null_code_generator,  # Preserves original text
-        "dummy": dummy_code_generator
+        "null": null_code_generator,   # Preserves original text
+        "kodit_local": kodit_local_generator # Indexes the repository with kodit
     }
     
     process_dataset(
