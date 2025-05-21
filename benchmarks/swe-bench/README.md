@@ -27,7 +27,15 @@ uv run python prediction.py \
     --temperature 0.0 \
     --top_p 0.95
 
+### With Kodit
 
+uv run python prediction.py \
+    --dataset_name_or_path base_datasets/dataset_with_kodit_local_generator_code \
+    --split test \
+    --model_name gpt-4.1-nano-2025-04-14 \
+    --output_dir results \
+    --temperature 0.0 \
+    --top_p 0.95
 
 ### VLLM example:
 
@@ -53,3 +61,11 @@ uv run python -m swebench.harness.run_evaluation \
     --predictions_path results/gpt-4.1-nano-2025-04-14__dataset_with_null_code__test.jsonl \
     --max_workers 8 \
     --run_id my_first_evaluation
+
+### Kodit
+
+uv run python -m swebench.harness.run_evaluation \
+    --dataset_name princeton-nlp/SWE-bench_Lite \
+    --predictions_path results/gpt-4.1-nano-2025-04-14__dataset_with_kodit_local_generator_code__test.jsonl \
+    --max_workers 8 \
+    --run_id kodit_bm25
