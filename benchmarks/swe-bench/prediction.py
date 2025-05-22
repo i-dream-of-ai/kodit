@@ -153,10 +153,10 @@ def run_inference(
                     # If patch does not end it a newline, add one
                     if not patch.endswith("\n"):
                         patch += "\n"
-                    diff_file = DiffFile.from_string(patch)
-                    diff_file.fix_counts()
-                    diff_file.validate()
-                    output_dict[KEY_PREDICTION] = diff_file.to_string()
+                    # diff_file = DiffFile.from_string(patch)
+                    # diff_file.fix_counts()
+                    # diff_file.validate()
+                    output_dict[KEY_PREDICTION] = patch
                 
                 # Write to file
                 print(json.dumps(output_dict), file=f, flush=True)
@@ -164,7 +164,7 @@ def run_inference(
             except Exception as e:
                 logger.error(f"Error processing instance {instance_id}: {str(e)}")
                 continue
-    
+
     logger.info(f"Finished! Output saved to {output_file}")
 
 def main():

@@ -22,7 +22,7 @@ uv run python main.py \
 uv run python prediction.py \
     --dataset_name_or_path base_datasets/dataset_with_null_code \
     --split test \
-    --model_name gpt-4.1-nano-2025-04-14 \
+    --model_name gpt-4.1-2025-04-14 \
     --output_dir results \
     --temperature 0.0 \
     --top_p 0.95
@@ -32,7 +32,7 @@ uv run python prediction.py \
 uv run python prediction.py \
     --dataset_name_or_path base_datasets/dataset_with_kodit_local_generator_code \
     --split test \
-    --model_name gpt-4.1-nano-2025-04-14 \
+    --model_name gpt-4.1-2025-04-14 \
     --output_dir results \
     --temperature 0.0 \
     --top_p 0.95
@@ -58,14 +58,14 @@ uv run python prediction.py \
 
 uv run python -m swebench.harness.run_evaluation \
     --dataset_name princeton-nlp/SWE-bench_Lite \
-    --predictions_path results/gpt-4.1-nano-2025-04-14__dataset_with_null_code__test.jsonl \
+    --predictions_path results/gpt-4.1-2025-04-14__dataset_with_null_code__test.jsonl \
     --max_workers 8 \
-    --run_id my_first_evaluation
+    --run_id gpt_4_1_oracle
 
 ### Kodit
 
-uv run python -m swebench.harness.run_evaluation \
+nohup uv run python -m swebench.harness.run_evaluation \
     --dataset_name princeton-nlp/SWE-bench_Lite \
-    --predictions_path results/gpt-4.1-nano-2025-04-14__dataset_with_kodit_local_generator_code__test.jsonl \
+    --predictions_path results/gpt-4.1-2025-04-14__dataset_with_kodit_local_generator_code__test.jsonl \
     --max_workers 8 \
-    --run_id kodit_bm25
+    --run_id gpt_4_1_kodit_bm25 > kodit.log 2> kodit.err < /dev/null &

@@ -1,3 +1,4 @@
 base_datasets/
 logs/
 results/
+*.err

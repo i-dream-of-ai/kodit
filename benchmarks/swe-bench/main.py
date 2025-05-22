@@ -90,20 +90,14 @@ def inject_custom_context(
     
     # If code generator returns None, don't modify the text
     if new_code_content is not None:
-        # Split the text into sections using both opening and closing tags
-        sections = base_text.split("<code>")
-        if len(sections) != 2:
-            raise ValueError("Could not find opening <code> tag in text")
-        
-        before_code, after_code = sections
-        after_sections = after_code.split("</code>")
+        after_sections = base_text.split("</code>")
         if len(after_sections) != 2:
             raise ValueError("Could not find closing </code> tag in text")
         
-        after_code = after_sections[1]
+        inside_code, outside_code = after_sections
         
-        # Replace the code section with new content
-        modified_text = f"{before_code}<code>{new_code_content}</code>{after_code}"
+        # Add further context to the code
+        modified_text = f"{inside_code}\n{new_code_content}</code>{outside_code}"
         instance["text"] = modified_text
     else:
         instance["text"] = base_text
@@ -216,6 +210,11 @@ def process_dataset(
                     prompt_style
                 )
                 
+                # # Dump debug data to json file
+                # with open(output_dir / f"debug_{code_generator.__name__}.json", "w") as f:
+                #     json.dump(datum, f)
+                # exit()
+
                 for key in columns:
                     split_data[key].append(datum.get(key, ""))
         
@@ -350,15 +349,21 @@ def main():
 
             # Use openai to generate keywords from the problem statement
             keywords = openai.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4.1-2025-04-14",
                 messages=[
-                    {"role": "system", "content": "You are a helpful assistant that generates keywords from a problem statement."},
+                    {"role": "system", "content": "You are a helpful assistant that generates keywords from a problem statement. Only return single word keywords in a comma separated list. For example: \"auth, filter, index\""},
                     {"role": "user", "content": f"Generate keywords from the following problem statement: {problem_statement}"}
                 ]
             )
             if not keywords.choices:
                 raise ValueError("No keywords generated")
             keywords = str(keywords.choices[0].message.content)
+            keywords = keywords.replace("\"", "").replace("'", "").strip()
+            keywords = keywords.split(",")
+            keywords = [keyword.strip() for keyword in keywords]
+            keywords = ",".join(keywords)
+
+            print(f"Keywords from Kodit: {keywords}")
 
             # Use kodit to retrieve the files
             results = subprocess.run(["kodit", "--disable-telemetry", "retrieve", keywords], capture_output=True, text=True)
