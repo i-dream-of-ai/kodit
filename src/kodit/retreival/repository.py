@@ -5,12 +5,23 @@ related to searching and retrieving code snippets, including string-based search
 and their associated file information.
 """
 
-from typing import TypeVar
+import math
+from typing import Any, TypeVar
 
 import pydantic
-from sqlalchemy import select
+from sqlalchemy import (
+    ColumnElement,
+    Float,
+    cast,
+    desc,
+    func,
+    literal,
+    select,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped
 
+from kodit.embedding.models import Embedding, EmbeddingType
 from kodit.indexing.models import Snippet
 from kodit.sources.models import File
 
@@ -24,8 +35,10 @@ class RetrievalResult(pydantic.BaseModel):
     and the matching snippet content.
     """
 
+    id: int
     uri: str
     content: str
+    score: float
 
 
 class RetrievalRepository:
@@ -69,8 +82,10 @@ class RetrievalRepository:
 
         return [
             RetrievalResult(
+                id=snippet.id,
                 uri=file.uri,
                 content=snippet.content,
+                score=1.0,
             )
             for snippet, file in results
         ]
@@ -90,7 +105,7 @@ class RetrievalRepository:
         """List snippets by IDs.
 
         Returns:
-            A list of snippets.
+            A list of snippets in the same order as the input IDs.
 
         """
         query = (
@@ -99,10 +114,70 @@ class RetrievalRepository:
             .join(File, Snippet.file_id == File.id)
         )
         rows = await self.session.execute(query)
-        return [
-            RetrievalResult(
+
+        # Create a dictionary for O(1) lookup of results by ID
+        id_to_result = {
+            snippet.id: RetrievalResult(
+                id=snippet.id,
                 uri=file.uri,
                 content=snippet.content,
+                score=1.0,
             )
             for snippet, file in rows.all()
-        ]
+        }
+
+        # Return results in the same order as input IDs
+        return [id_to_result[i] for i in ids]
+
+    async def list_semantic_results(
+        self, embedding_type: EmbeddingType, embedding: list[float], top_k: int = 10
+    ) -> list[tuple[int, float]]:
+        """List semantic results."""
+        cosine_similarity = cosine_similarity_json(Embedding.embedding, embedding)
+
+        query = (
+            select(Embedding, cosine_similarity)
+            .where(Embedding.type == embedding_type)
+            .order_by(desc(cosine_similarity))
+            .limit(top_k)
+        )
+        rows = await self.session.execute(query)
+        return [(embedding.snippet_id, distance) for embedding, distance in rows.all()]
+
+
+def cosine_similarity_json(
+    col: Mapped[Any], query_vec: list[float]
+) -> ColumnElement[Any]:
+    """Calculate the cosine similarity using pure sqlalchemy.
+
+    Works for a *fixed-length* vector stored as a JSON array in SQLite.
+    The calculation is done entirely in SQL using SQLite's JSON functions.
+
+    Args:
+        col: The column containing the JSON array of floats
+        query_vec: The query vector to compare against
+
+    Returns:
+        A SQLAlchemy expression that computes the cosine similarity
+
+    """
+    # Pre-compute query norm
+    q_norm = math.sqrt(sum(x * x for x in query_vec))
+
+    # Calculate dot product using JSON array functions
+    dot = sum(
+        cast(func.json_extract(col, f"$[{i}]"), Float) * literal(float(q))
+        for i, q in enumerate(query_vec)
+    )
+
+    # Calculate row norm on the fly
+    row_norm = func.sqrt(
+        sum(
+            cast(func.json_extract(col, f"$[{i}]"), Float)
+            * cast(func.json_extract(col, f"$[{i}]"), Float)
+            for i in range(len(query_vec))
+        )
+    )
+
+    # Calculate cosine similarity
+    return (dot / (row_norm * literal(q_norm))).label("cosine_similarity")

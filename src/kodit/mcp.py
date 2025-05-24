@@ -12,7 +12,7 @@ from pydantic import Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kodit._version import version
-from kodit.config import AppContext
+from kodit.config import DEFAULT_EMBEDDING_MODEL_NAME, AppContext
 from kodit.database import Database
 from kodit.retreival.repository import RetrievalRepository, RetrievalResult
 from kodit.retreival.service import RetrievalRequest, RetrievalService
@@ -115,18 +115,12 @@ async def retrieve_relevant_snippets(
     retrieval_service = RetrievalService(
         repository=retrieval_repository,
         data_dir=mcp_context.data_dir,
+        embedding_model_name=DEFAULT_EMBEDDING_MODEL_NAME,
     )
 
-    log.debug("Fusing input")
-    input_query = input_fusion(
-        user_intent=user_intent,
-        related_file_paths=related_file_paths,
-        related_file_contents=related_file_contents,
-        keywords=keywords,
-    )
-    log.debug("Input", input_query=input_query)
     retrieval_request = RetrievalRequest(
         keywords=keywords,
+        code_query="\n".join(related_file_contents),
     )
     log.debug("Retrieving snippets")
     snippets = await retrieval_service.retrieve(request=retrieval_request)

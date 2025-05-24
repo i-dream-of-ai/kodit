@@ -14,6 +14,8 @@ import structlog
 from tqdm.asyncio import tqdm
 
 from kodit.bm25.bm25 import BM25Service
+from kodit.embedding.embedding import EmbeddingService
+from kodit.embedding.models import Embedding, EmbeddingType
 from kodit.indexing.models import Snippet
 from kodit.indexing.repository import IndexRepository
 from kodit.snippets.snippets import SnippetService
@@ -50,6 +52,7 @@ class IndexService:
         repository: IndexRepository,
         source_service: SourceService,
         data_dir: Path,
+        embedding_model_name: str,
     ) -> None:
         """Initialize the index service.
 
@@ -63,6 +66,7 @@ class IndexService:
         self.snippet_service = SnippetService()
         self.log = structlog.get_logger(__name__)
         self.bm25 = BM25Service(data_dir)
+        self.code_embedding_service = EmbeddingService(model_name=embedding_model_name)
 
     async def create(self, source_id: int) -> IndexView:
         """Create a new index for a source.
@@ -128,9 +132,26 @@ class IndexService:
         # Create snippets for supported file types
         await self._create_snippets(index_id)
 
-        # Update BM25 index
         snippets = await self.repository.get_all_snippets()
-        self.bm25.index([snippet.content for snippet in snippets])
+
+        self.log.info("Creating keyword index")
+        self.bm25.index(
+            [
+                snippet.content
+                for snippet in tqdm(snippets, total=len(snippets), leave=False)
+            ]
+        )
+
+        self.log.info("Creating semantic code index")
+        for snippet in tqdm(snippets, total=len(snippets), leave=False):
+            embedding = next(self.code_embedding_service.embed([snippet.content]))
+            await self.repository.add_embedding(
+                Embedding(
+                    snippet_id=snippet.id,
+                    embedding=embedding,
+                    type=EmbeddingType.CODE,
+                )
+            )
 
         # Update index timestamp
         await self.repository.update_index_timestamp(index)
@@ -148,7 +169,7 @@ class IndexService:
 
         """
         files = await self.repository.files_for_index(index_id)
-        for file in tqdm(files, total=len(files)):
+        for file in tqdm(files, total=len(files), leave=False):
             # Skip unsupported file types
             if file.mime_type in MIME_BLACKLIST:
                 self.log.debug("Skipping mime type", mime_type=file.mime_type)

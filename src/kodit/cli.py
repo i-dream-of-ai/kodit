@@ -15,6 +15,7 @@ from kodit.config import (
     DEFAULT_BASE_DIR,
     DEFAULT_DB_URL,
     DEFAULT_DISABLE_TELEMETRY,
+    DEFAULT_EMBEDDING_MODEL_NAME,
     DEFAULT_LOG_FORMAT,
     DEFAULT_LOG_LEVEL,
     AppContext,
@@ -23,7 +24,7 @@ from kodit.config import (
 )
 from kodit.indexing.repository import IndexRepository
 from kodit.indexing.service import IndexService
-from kodit.logging import configure_logging, configure_telemetry, log_event
+from kodit.log import configure_logging, configure_telemetry, log_event
 from kodit.retreival.repository import RetrievalRepository
 from kodit.retreival.service import RetrievalRequest, RetrievalService
 from kodit.sources.repository import SourceRepository
@@ -97,7 +98,12 @@ async def index(
     source_repository = SourceRepository(session)
     source_service = SourceService(app_context.get_clone_dir(), source_repository)
     repository = IndexRepository(session)
-    service = IndexService(repository, source_service, app_context.get_data_dir())
+    service = IndexService(
+        repository,
+        source_service,
+        app_context.get_data_dir(),
+        embedding_model_name=DEFAULT_EMBEDDING_MODEL_NAME,
+    )
 
     if not sources:
         # No source specified, list all indexes
@@ -133,20 +139,106 @@ async def index(
         await service.run(index.id)
 
 
-@cli.command()
+@cli.group()
+def search() -> None:
+    """Search for snippets in the database."""
+
+
+@search.command()
 @click.argument("query")
 @click.option("--top-k", default=10, help="Number of snippets to retrieve")
 @with_app_context
 @with_session
-async def retrieve(
-    session: AsyncSession, app_context: AppContext, query: str, top_k: int
+async def code(
+    session: AsyncSession,
+    app_context: AppContext,
+    query: str,
+    top_k: int,
 ) -> None:
-    """Retrieve snippets from the database."""
+    """Search for snippets using semantic code search.
+
+    This works best if your query is code.
+    """
     repository = RetrievalRepository(session)
-    service = RetrievalService(repository, app_context.get_data_dir())
-    # Temporary request while we don't have all search capabilities
+    service = RetrievalService(
+        repository,
+        app_context.get_data_dir(),
+        embedding_model_name=DEFAULT_EMBEDDING_MODEL_NAME,
+    )
+
+    snippets = await service.retrieve(RetrievalRequest(code_query=query, top_k=top_k))
+
+    if len(snippets) == 0:
+        click.echo("No snippets found")
+        return
+
+    for snippet in snippets:
+        click.echo("-" * 80)
+        click.echo(f"{snippet.uri}")
+        click.echo(snippet.content)
+        click.echo("-" * 80)
+        click.echo()
+
+
+@search.command()
+@click.argument("keywords", nargs=-1)
+@click.option("--top-k", default=10, help="Number of snippets to retrieve")
+@with_app_context
+@with_session
+async def keyword(
+    session: AsyncSession,
+    app_context: AppContext,
+    keywords: list[str],
+    top_k: int,
+) -> None:
+    """Search for snippets using keyword search."""
+    repository = RetrievalRepository(session)
+    service = RetrievalService(
+        repository,
+        app_context.get_data_dir(),
+        embedding_model_name=DEFAULT_EMBEDDING_MODEL_NAME,
+    )
+
+    snippets = await service.retrieve(RetrievalRequest(keywords=keywords, top_k=top_k))
+
+    if len(snippets) == 0:
+        click.echo("No snippets found")
+        return
+
+    for snippet in snippets:
+        click.echo("-" * 80)
+        click.echo(f"{snippet.uri}")
+        click.echo(snippet.content)
+        click.echo("-" * 80)
+        click.echo()
+
+
+@search.command()
+@click.option("--top-k", default=10, help="Number of snippets to retrieve")
+@click.option("--keywords", required=True, help="Comma separated list of keywords")
+@click.option("--code", required=True, help="Semantic code search query")
+@with_app_context
+@with_session
+async def hybrid(
+    session: AsyncSession,
+    app_context: AppContext,
+    top_k: int,
+    keywords: str,
+    code: str,
+) -> None:
+    """Search for snippets using hybrid search."""
+    repository = RetrievalRepository(session)
+    service = RetrievalService(
+        repository,
+        app_context.get_data_dir(),
+        embedding_model_name=DEFAULT_EMBEDDING_MODEL_NAME,
+    )
+
+    # Parse keywords into a list of strings
+    keywords_list = [k.strip().lower() for k in keywords.split(",")]
+
     snippets = await service.retrieve(
-        RetrievalRequest(keywords=query.split(","), top_k=top_k)
+        RetrievalRequest(keywords=keywords_list, code_query=code, top_k=top_k)
     )
 
     if len(snippets) == 0:
