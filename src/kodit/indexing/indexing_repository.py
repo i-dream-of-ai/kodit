@@ -10,6 +10,7 @@ from typing import TypeVar
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.exc import MultipleResultsFound
 
 from kodit.embedding.embedding_models import Embedding
 from kodit.indexing.indexing_models import Index, Snippet
@@ -124,15 +125,34 @@ class IndexRepository:
         index.updated_at = datetime.now(UTC)
         await self.session.commit()
 
-    async def add_snippet(self, snippet: Snippet) -> None:
-        """Add a new snippet to the database.
+    async def add_snippet_or_update_content(self, snippet: Snippet) -> None:
+        """Add a new snippet to the database if it doesn't exist, otherwise update it.
 
         Args:
             snippet: The Snippet instance to add.
 
         """
-        self.session.add(snippet)
-        await self.session.commit()
+        query = select(Snippet).where(
+            Snippet.file_id == snippet.file_id,
+            Snippet.index_id == snippet.index_id,
+        )
+        result = await self.session.execute(query)
+        try:
+            existing_snippet = result.scalar_one_or_none()
+
+            if existing_snippet:
+                existing_snippet.content = snippet.content
+            else:
+                self.session.add(snippet)
+
+            await self.session.commit()
+        except MultipleResultsFound as e:
+            msg = (
+                f"Multiple snippets found for file_id {snippet.file_id}, this "
+                "shouldn't happen. "
+                "Please report this as a bug then delete your index and start again."
+            )
+            raise ValueError(msg) from e
 
     async def delete_all_snippets(self, index_id: int) -> None:
         """Delete all snippets for an index.

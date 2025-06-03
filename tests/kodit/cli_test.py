@@ -1,5 +1,6 @@
 """Test the CLI."""
 
+from pathlib import Path
 import tempfile
 from typing import Generator
 import pytest
@@ -9,10 +10,21 @@ from kodit.cli import cli
 
 
 @pytest.fixture
-def runner() -> Generator[CliRunner, None, None]:
+def tmp_data_dir() -> Generator[Path, None, None]:
+    """Create a temporary data directory."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        yield Path(tmp_dir)
+
+
+@pytest.fixture
+def runner(tmp_data_dir: Path) -> Generator[CliRunner, None, None]:
     """Create a CliRunner instance."""
     runner = CliRunner()
-    runner.env = {"DISABLE_TELEMETRY": "true"}
+    runner.env = {
+        "DISABLE_TELEMETRY": "true",
+        "DATA_DIR": str(tmp_data_dir),
+        "DB_URL": f"sqlite+aiosqlite:///{tmp_data_dir}/test.db",
+    }
     yield runner
 
 
@@ -23,8 +35,8 @@ def test_version_command(runner: CliRunner) -> None:
     assert result.exit_code == 0
 
 
-def test_telemetry_disabled_by_default(runner: CliRunner) -> None:
-    """Test that telemetry is disabled by default."""
+def test_telemetry_disabled_in_these_tests(runner: CliRunner) -> None:
+    """Test that telemetry is disabled in these tests."""
     result = runner.invoke(cli, ["version"])
     assert result.exit_code == 0
     assert "Telemetry has been disabled" in result.output

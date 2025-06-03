@@ -1,11 +1,13 @@
 """Tests for the indexing service module."""
 
 from pathlib import Path
+import tempfile
+from typing import Any, Generator
 
 import pytest
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kodit.bm25.local_bm25 import BM25Service
 from kodit.config import AppContext
 from kodit.embedding.embedding import TINY, LocalEmbedder
 from kodit.indexing.indexing_repository import IndexRepository
@@ -40,10 +42,11 @@ def service(
     app_context: AppContext, repository: IndexRepository, source_service: SourceService
 ) -> IndexService:
     """Create a real service instance with a database session."""
+    keyword_search_provider = BM25Service(app_context.get_data_dir())
     return IndexService(
         repository,
         source_service,
-        app_context.get_data_dir(),
+        keyword_search_provider,
         embedding_service=LocalEmbedder(model_name=TINY),
     )
 
@@ -79,23 +82,6 @@ async def test_create_index_source_not_found(service: IndexService) -> None:
     """Test creating an index for a non-existent source."""
     with pytest.raises(ValueError, match="Source not found: 999"):
         await service.create(999)
-
-
-@pytest.mark.asyncio
-async def test_create_index_already_exists(
-    service: IndexService, session: AsyncSession
-) -> None:
-    """Test creating an index that already exists."""
-    # Create a test source
-    source = Source(uri="test_folder", cloned_path="test_folder")
-    session.add(source)
-    await session.commit()
-
-    # Create first index
-    await service.create(source.id)
-
-    # Try to create second index, should be fine
-    await service.create(source.id)
 
 
 @pytest.mark.asyncio
@@ -146,6 +132,16 @@ async def test_run_index(
     snippets = await repository.get_snippets_for_index(index.id)
     assert len(snippets) == 1
     assert snippets[0].content == "print('hello')"
+
+    # Try to create second index, should be fine
+    await service.create(source.id)
+
+    # Try to run the index again, should reuse
+    await service.run(index.id)
+
+    # Check that number of snippets is still 1
+    snippets = await repository.get_snippets_for_index(index.id)
+    assert len(snippets) == 1
 
 
 @pytest.mark.asyncio

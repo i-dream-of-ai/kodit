@@ -13,13 +13,14 @@ import pydantic
 import structlog
 from tqdm.asyncio import tqdm
 
-from kodit.bm25.bm25 import BM25Service
+from kodit.bm25.keyword_search_service import BM25Document, KeywordSearchProvider
 from kodit.embedding.embedding import Embedder, EmbeddingInput
 from kodit.embedding.embedding_models import Embedding, EmbeddingType
 from kodit.indexing.indexing_models import Snippet
 from kodit.indexing.indexing_repository import IndexRepository
 from kodit.snippets.snippets import SnippetService
 from kodit.source.source_service import SourceService
+from kodit.util.spinner import Spinner
 
 # List of MIME types that are blacklisted from being indexed
 MIME_BLACKLIST = ["unknown/unknown"]
@@ -51,7 +52,7 @@ class IndexService:
         self,
         repository: IndexRepository,
         source_service: SourceService,
-        data_dir: Path,
+        keyword_search_provider: KeywordSearchProvider,
         embedding_service: Embedder,
     ) -> None:
         """Initialize the index service.
@@ -65,7 +66,7 @@ class IndexService:
         self.source_service = source_service
         self.snippet_service = SnippetService()
         self.log = structlog.get_logger(__name__)
-        self.bm25 = BM25Service(data_dir)
+        self.keyword_search_provider = keyword_search_provider
         self.code_embedding_service = embedding_service
 
     async def create(self, source_id: int) -> IndexView:
@@ -126,21 +127,19 @@ class IndexService:
             msg = f"Index not found: {index_id}"
             raise ValueError(msg)
 
-        # First delete all old snippets, if they exist
-        await self.repository.delete_all_snippets(index_id)
-
         # Create snippets for supported file types
         await self._create_snippets(index_id)
 
         snippets = await self.repository.get_all_snippets(index_id)
 
         self.log.info("Creating keyword index")
-        self.bm25.index(
-            [
-                snippet.content
-                for snippet in tqdm(snippets, total=len(snippets), leave=False)
-            ]
-        )
+        with Spinner("Building keyword index..."):
+            await self.keyword_search_provider.index(
+                [
+                    BM25Document(snippet_id=snippet.id, text=snippet.content)
+                    for snippet in snippets
+                ]
+            )
 
         self.log.info("Creating semantic code index")
         async for e in tqdm(
@@ -195,4 +194,4 @@ class IndexService:
                     file_id=file.id,
                     content=snippet.text,
                 )
-                await self.repository.add_snippet(s)
+                await self.repository.add_snippet_or_update_content(s)
