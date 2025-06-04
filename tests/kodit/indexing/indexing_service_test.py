@@ -9,7 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kodit.bm25.local_bm25 import BM25Service
 from kodit.config import AppContext
-from kodit.embedding.embedding import TINY, LocalEmbedder
+from kodit.embedding.embedding_provider.local_embedding_provider import (
+    TINY,
+    LocalEmbeddingProvider,
+)
+from kodit.embedding.embedding_repository import EmbeddingRepository
+from kodit.embedding.local_vector_search_service import LocalVectorSearchService
+from kodit.embedding.vector_search_service import (
+    VectorSearchService,
+)
 from kodit.indexing.indexing_repository import IndexRepository
 from kodit.indexing.indexing_service import IndexService
 from kodit.source.source_models import File, Source
@@ -38,8 +46,20 @@ def source_service(
 
 
 @pytest.fixture
+def embedding_service(session: AsyncSession) -> VectorSearchService:
+    """Create a real embedding service instance."""
+    return LocalVectorSearchService(
+        embedding_repository=EmbeddingRepository(session),
+        embedding_provider=LocalEmbeddingProvider(TINY),
+    )
+
+
+@pytest.fixture
 def service(
-    app_context: AppContext, repository: IndexRepository, source_service: SourceService
+    app_context: AppContext,
+    repository: IndexRepository,
+    source_service: SourceService,
+    embedding_service: VectorSearchService,
 ) -> IndexService:
     """Create a real service instance with a database session."""
     keyword_search_provider = BM25Service(app_context.get_data_dir())
@@ -47,7 +67,7 @@ def service(
         repository,
         source_service,
         keyword_search_provider,
-        embedding_service=LocalEmbedder(model_name=TINY),
+        embedding_service,
     )
 
 
