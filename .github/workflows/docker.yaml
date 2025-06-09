@@ -2,8 +2,30 @@ name: Publish Docker image
 
 on:
   push:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+env:
+  TEST_TAG: user/app:test
 
 jobs:
+  test-build:
+    name: Test and build Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Build and push Docker image
+        id: push
+        uses: docker/build-push-action@3b5e8027fcad23fda98b2e3ac259d8d67585f671
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          tags: ${{ env.TEST_TAG }}
+
   push_to_registry:
     name: Push Docker image to registry
     runs-on: ubuntu-latest
@@ -14,6 +36,9 @@ jobs:
       contents: read
       attestations: write
       id-token: write
+    needs: test-build
+    # Only run on main branch or when explicitly triggered
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
