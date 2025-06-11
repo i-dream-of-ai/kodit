@@ -14,7 +14,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
 
-    from openai import AsyncOpenAI
 
 from kodit.database import Database
 
@@ -25,13 +24,16 @@ DEFAULT_LOG_FORMAT = "pretty"
 DEFAULT_DISABLE_TELEMETRY = False
 T = TypeVar("T")
 
+EndpointType = Literal["openai"]
+
 
 class Endpoint(BaseModel):
     """Endpoint provides configuration for an AI service."""
 
-    type: Literal["openai"] = Field(default="openai")
-    api_key: str | None = None
+    type: EndpointType | None = None
     base_url: str | None = None
+    model: str | None = None
+    api_key: str | None = None
 
 
 class Search(BaseModel):
@@ -57,14 +59,19 @@ class AppContext(BaseSettings):
     log_format: str = Field(default=DEFAULT_LOG_FORMAT)
     disable_telemetry: bool = Field(default=DEFAULT_DISABLE_TELEMETRY)
     default_endpoint: Endpoint | None = Field(
-        default=Endpoint(
-            type="openai",
-            base_url="https://api.openai.com/v1",
-        ),
+        default=None,
         description=(
             "Default endpoint to use for all AI interactions "
             "(can be overridden by task-specific configuration)."
         ),
+    )
+    embedding_endpoint: Endpoint | None = Field(
+        default=None,
+        description="Endpoint to use for embedding.",
+    )
+    enrichment_endpoint: Endpoint | None = Field(
+        default=None,
+        description="Endpoint to use for enrichment.",
     )
     default_search: Search = Field(
         default=Search(),
@@ -94,23 +101,6 @@ class AppContext(BaseSettings):
         if run_migrations:
             await self._db.run_migrations(self.db_url)
         return self._db
-
-    def get_default_openai_client(self) -> AsyncOpenAI | None:
-        """Get the default OpenAI client, if it is configured."""
-        from openai import AsyncOpenAI
-
-        endpoint = self.default_endpoint
-        if not (
-            endpoint
-            and endpoint.type == "openai"
-            and endpoint.api_key
-            and endpoint.base_url
-        ):
-            return None
-        return AsyncOpenAI(
-            api_key=endpoint.api_key,
-            base_url=endpoint.base_url,
-        )
 
 
 with_app_context = click.make_pass_decorator(AppContext)
