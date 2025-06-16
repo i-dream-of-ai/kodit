@@ -26,6 +26,7 @@ from kodit.enrichment.enrichment_service import EnrichmentService
 from kodit.indexing.fusion import FusionRequest, reciprocal_rank_fusion
 from kodit.indexing.indexing_models import Snippet
 from kodit.indexing.indexing_repository import IndexRepository
+from kodit.log import log_event
 from kodit.snippets.snippets import SnippetService
 from kodit.source.source_service import SourceService
 from kodit.util.spinner import Spinner
@@ -45,7 +46,7 @@ class IndexView(pydantic.BaseModel):
     created_at: datetime
     updated_at: datetime | None = None
     source: str | None = None
-    num_snippets: int | None = None
+    num_snippets: int
 
 
 class SearchRequest(pydantic.BaseModel):
@@ -119,6 +120,8 @@ class IndexService:
             ValueError: If the source doesn't exist or already has an index.
 
         """
+        log_event("kodit.index.create")
+
         # Check if the source exists
         source = await self.source_service.get(source_id)
 
@@ -129,6 +132,8 @@ class IndexService:
         return IndexView(
             id=index.id,
             created_at=index.created_at,
+            num_snippets=await self.repository.num_snippets_for_index(index.id),
+            source=source.uri,
         )
 
     async def list_indexes(self) -> list[IndexView]:
@@ -142,19 +147,33 @@ class IndexService:
         indexes = await self.repository.list_indexes()
 
         # Transform database results into DTOs
-        return [
+        indexes = [
             IndexView(
                 id=index.id,
                 created_at=index.created_at,
                 updated_at=index.updated_at,
-                num_snippets=await self.repository.num_snippets_for_index(index.id),
+                num_snippets=await self.repository.num_snippets_for_index(index.id)
+                or 0,
                 source=source.uri,
             )
             for index, source in indexes
         ]
 
+        # Help Kodit by measuring how much people are using indexes
+        log_event(
+            "kodit.index.list",
+            {
+                "num_indexes": len(indexes),
+                "num_snippets": sum([index.num_snippets for index in indexes]),
+            },
+        )
+
+        return indexes
+
     async def run(self, index_id: int) -> None:
         """Run the indexing process for a specific index."""
+        log_event("kodit.index.run")
+
         # Get and validate index
         index = await self.repository.get_by_id(index_id)
         if not index:
@@ -218,6 +237,8 @@ class IndexService:
 
     async def search(self, request: SearchRequest) -> list[SearchResult]:
         """Search for relevant data."""
+        log_event("kodit.index.search")
+
         fusion_list: list[list[FusionRequest]] = []
         if request.keywords:
             # Gather results for each keyword
