@@ -3,20 +3,24 @@
 from __future__ import annotations
 
 import os
+from time import time
 from typing import TYPE_CHECKING
 
 import structlog
-import tiktoken
-from tqdm import tqdm
 
 from kodit.embedding.embedding_provider.embedding_provider import (
     EmbeddingProvider,
-    Vector,
+    EmbeddingRequest,
+    EmbeddingResponse,
     split_sub_batches,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
     from sentence_transformers import SentenceTransformer
+    from tiktoken import Encoding
+
 
 TINY = "tiny"
 CODE = "code"
@@ -36,8 +40,22 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         """Initialize the local embedder."""
         self.log = structlog.get_logger(__name__)
         self.model_name = COMMON_EMBEDDING_MODELS.get(model_name, model_name)
+        self.encoding_name = "text-embedding-3-small"
         self.embedding_model = None
-        self.encoding = tiktoken.encoding_for_model("text-embedding-3-small")
+        self.encoding = None
+
+    def _encoding(self) -> Encoding:
+        if self.encoding is None:
+            from tiktoken import encoding_for_model
+
+            start_time = time()
+            self.encoding = encoding_for_model(self.encoding_name)
+            self.log.debug(
+                "Encoding loaded",
+                model_name=self.encoding_name,
+                duration=time() - start_time,
+            )
+        return self.encoding
 
     def _model(self) -> SentenceTransformer:
         """Get the embedding model."""
@@ -45,20 +63,34 @@ class LocalEmbeddingProvider(EmbeddingProvider):
             os.environ["TOKENIZERS_PARALLELISM"] = "false"  # Avoid warnings
             from sentence_transformers import SentenceTransformer
 
+            start_time = time()
             self.embedding_model = SentenceTransformer(
                 self.model_name,
                 trust_remote_code=True,
             )
+            self.log.debug(
+                "Model loaded",
+                model_name=self.model_name,
+                duration=time() - start_time,
+            )
         return self.embedding_model
 
-    async def embed(self, data: list[str]) -> list[Vector]:
+    async def embed(
+        self, data: list[EmbeddingRequest]
+    ) -> AsyncGenerator[list[EmbeddingResponse], None]:
         """Embed a list of strings."""
         model = self._model()
 
-        batched_data = split_sub_batches(self.encoding, data)
+        batched_data = split_sub_batches(self._encoding(), data)
 
-        results: list[Vector] = []
-        for batch in tqdm(batched_data, total=len(batched_data), leave=False):
-            embeddings = model.encode(batch, show_progress_bar=False, batch_size=4)
-            results.extend([[float(x) for x in embedding] for embedding in embeddings])
-        return results
+        for batch in batched_data:
+            embeddings = model.encode(
+                [i.text for i in batch], show_progress_bar=False, batch_size=4
+            )
+            yield [
+                EmbeddingResponse(
+                    id=item.id,
+                    embedding=[float(x) for x in embedding],
+                )
+                for item, embedding in zip(batch, embeddings, strict=True)
+            ]

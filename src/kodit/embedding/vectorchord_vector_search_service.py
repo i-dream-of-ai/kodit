@@ -1,13 +1,19 @@
 """Vectorchord vector search."""
 
+from collections.abc import AsyncGenerator
 from typing import Any, Literal
 
 import structlog
 from sqlalchemy import Result, TextClause, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kodit.embedding.embedding_provider.embedding_provider import EmbeddingProvider
+from kodit.embedding.embedding_models import EmbeddingType
+from kodit.embedding.embedding_provider.embedding_provider import (
+    EmbeddingProvider,
+    EmbeddingRequest,
+)
 from kodit.embedding.vector_search_service import (
+    IndexResult,
     VectorSearchRequest,
     VectorSearchResponse,
     VectorSearchService,
@@ -52,6 +58,10 @@ ORDER BY score ASC
 LIMIT :top_k;
 """
 
+CHECK_VCHORD_EMBEDDING_EXISTS = """
+SELECT EXISTS(SELECT 1 FROM {TABLE_NAME} WHERE snippet_id = :snippet_id)
+"""
+
 TaskName = Literal["code", "text"]
 
 
@@ -89,7 +99,15 @@ class VectorChordVectorSearchService(VectorSearchService):
 
     async def _create_tables(self) -> None:
         """Create the necessary tables."""
-        vector_dim = (await self.embedding_provider.embed(["dimension"]))[0]
+        req = EmbeddingRequest(id=0, text="dimension")
+        vector_dim: list[float] | None = None
+        async for batch in self.embedding_provider.embed([req]):
+            if batch:
+                vector_dim = batch[0].embedding
+                break
+        if vector_dim is None:
+            msg = "Failed to obtain embedding dimension from provider"
+            raise RuntimeError(msg)
         await self._session.execute(
             text(
                 f"""CREATE TABLE IF NOT EXISTS {self.table_name} (
@@ -130,31 +148,48 @@ class VectorChordVectorSearchService(VectorSearchService):
         """Commit the session."""
         await self._session.commit()
 
-    async def index(self, data: list[VectorSearchRequest]) -> None:
+    async def index(
+        self, data: list[VectorSearchRequest]
+    ) -> AsyncGenerator[list[IndexResult], None]:
         """Embed a list of documents."""
         if not data or len(data) == 0:
             self.log.warning("Embedding data is empty, skipping embedding")
             return
 
-        embeddings = await self.embedding_provider.embed([doc.text for doc in data])
-        # Execute inserts
-        await self._execute(
-            text(INSERT_QUERY.format(TABLE_NAME=self.table_name)),
-            [
-                {"snippet_id": doc.snippet_id, "embedding": str(embedding)}
-                for doc, embedding in zip(data, embeddings, strict=True)
-            ],
-        )
-        await self._commit()
+        requests = [EmbeddingRequest(id=doc.snippet_id, text=doc.text) for doc in data]
+
+        async for batch in self.embedding_provider.embed(requests):
+            await self._execute(
+                text(INSERT_QUERY.format(TABLE_NAME=self.table_name)),
+                [
+                    {
+                        "snippet_id": result.id,
+                        "embedding": str(result.embedding),
+                    }
+                    for result in batch
+                ],
+            )
+            await self._commit()
+            yield [IndexResult(snippet_id=result.id) for result in batch]
 
     async def retrieve(self, query: str, top_k: int = 10) -> list[VectorSearchResponse]:
         """Query the embedding model."""
-        embedding = await self.embedding_provider.embed([query])
-        if len(embedding) == 0 or len(embedding[0]) == 0:
+        from kodit.embedding.embedding_provider.embedding_provider import (
+            EmbeddingRequest,
+        )
+
+        req = EmbeddingRequest(id=0, text=query)
+        embedding_vec: list[float] | None = None
+        async for batch in self.embedding_provider.embed([req]):
+            if batch:
+                embedding_vec = batch[0].embedding
+                break
+
+        if not embedding_vec:
             return []
         result = await self._execute(
             text(SEARCH_QUERY.format(TABLE_NAME=self.table_name)),
-            {"query": str(embedding[0]), "top_k": top_k},
+            {"query": str(embedding_vec), "top_k": top_k},
         )
         rows = result.mappings().all()
 
@@ -162,3 +197,15 @@ class VectorChordVectorSearchService(VectorSearchService):
             VectorSearchResponse(snippet_id=row["snippet_id"], score=row["score"])
             for row in rows
         ]
+
+    async def has_embedding(
+        self,
+        snippet_id: int,
+        embedding_type: EmbeddingType,  # noqa: ARG002
+    ) -> bool:
+        """Check if a snippet has an embedding."""
+        result = await self._execute(
+            text(CHECK_VCHORD_EMBEDDING_EXISTS.format(TABLE_NAME=self.table_name)),
+            {"snippet_id": snippet_id},
+        )
+        return result.scalar_one()

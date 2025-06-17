@@ -25,7 +25,7 @@ from kodit.embedding.vector_search_service import (
     VectorSearchRequest,
     VectorSearchResponse,
 )
-from kodit.embedding.embedding_models import EmbeddingType
+from kodit.embedding.embedding_models import Embedding, EmbeddingType
 from sqlalchemy.ext.asyncio import AsyncSession
 from kodit.indexing.indexing_models import Index, Snippet
 from kodit.source.source_models import File, Source
@@ -151,7 +151,7 @@ def embedding_provider():
 @pytest.fixture
 def vector_search_service(
     vectorchord_session: AsyncSession, embedding_provider: EmbeddingProvider
-):
+) -> VectorChordVectorSearchService:
     return VectorChordVectorSearchService(
         task_name="text",
         session=vectorchord_session,
@@ -161,7 +161,7 @@ def vector_search_service(
 
 @pytest.mark.asyncio
 async def test_retrieve_documents(
-    vector_search_service: LocalVectorSearchService, session: AsyncSession
+    vector_search_service: VectorChordVectorSearchService, session: AsyncSession
 ):
     index_id, file_id = await create_dummy_db_file(session)
 
@@ -184,7 +184,7 @@ async def test_retrieve_documents(
         VectorSearchRequest(snippet_id=snippet2.id, text=snippet2.content),
         VectorSearchRequest(snippet_id=snippet3.id, text=snippet3.content),
     ]
-    await vector_search_service.index(test_data)
+    [gen async for gen in vector_search_service.index(test_data)]
 
     results = await vector_search_service.retrieve(
         "python programming language", top_k=2
@@ -231,8 +231,34 @@ async def test_retrieve_with_custom_top_k(
         VectorSearchRequest(snippet_id=snippet2.id, text=snippet2.content),
         VectorSearchRequest(snippet_id=snippet3.id, text=snippet3.content),
     ]
-    await vector_search_service.index(test_data)
+    [gen async for gen in vector_search_service.index(test_data)]
 
     results = await vector_search_service.retrieve("test", top_k=1)
 
     assert len(results) == 1
+
+
+@pytest.mark.asyncio
+async def test_has_embedding(
+    vector_search_service: LocalVectorSearchService,
+    session: AsyncSession,
+):
+    index_id, file_id = await create_dummy_db_file(session)
+
+    snippet1 = Snippet(
+        index_id=index_id, file_id=file_id, content="python programming language"
+    )
+
+    session.add(snippet1)
+    await session.commit()
+
+    assert not await vector_search_service.has_embedding(
+        snippet1.id, EmbeddingType.CODE
+    )
+
+    test_data = [
+        VectorSearchRequest(snippet_id=snippet1.id, text=snippet1.content),
+    ]
+    [gen async for gen in vector_search_service.index(test_data)]
+
+    assert await vector_search_service.has_embedding(snippet1.id, EmbeddingType.CODE)
