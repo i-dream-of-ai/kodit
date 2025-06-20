@@ -12,15 +12,20 @@ from pydantic import Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kodit._version import version
-from kodit.bm25.keyword_search_factory import keyword_search_factory
+from kodit.application.services.snippet_application_service import (
+    SnippetApplicationService,
+)
 from kodit.config import AppContext
 from kodit.database import Database
-from kodit.embedding.embedding_factory import embedding_factory
-from kodit.enrichment.enrichment_factory import enrichment_factory
-from kodit.indexing.indexing_repository import IndexRepository
-from kodit.indexing.indexing_service import IndexService, SearchRequest, SearchResult
-from kodit.source.source_repository import SourceRepository
-from kodit.source.source_service import SourceService
+from kodit.domain.services.source_service import SourceService
+from kodit.domain.value_objects import MultiSearchRequest, MultiSearchResult
+from kodit.infrastructure.indexing.indexing_factory import (
+    create_indexing_application_service,
+)
+from kodit.infrastructure.snippet_extraction.snippet_extraction_factory import (
+    create_snippet_extraction_domain_service,
+    create_snippet_repositories,
+)
 
 
 @dataclass
@@ -67,6 +72,32 @@ mcp = FastMCP(
         "Call search() to retrieve relevant code examples."
     ),
 )
+
+
+def create_snippet_application_service(
+    session: AsyncSession,
+) -> SnippetApplicationService:
+    """Create a snippet application service with all dependencies.
+
+    Args:
+        session: SQLAlchemy session
+
+    Returns:
+        Configured snippet application service
+
+    """
+    # Create domain service
+    snippet_extraction_service = create_snippet_extraction_domain_service()
+
+    # Create repositories
+    snippet_repository, file_repository = create_snippet_repositories(session)
+
+    # Create application service
+    return SnippetApplicationService(
+        snippet_extraction_service=snippet_extraction_service,
+        snippet_repository=snippet_repository,
+        file_repository=file_repository,
+    )
 
 
 @mcp.tool()
@@ -126,31 +157,22 @@ async def search(
 
     mcp_context: MCPContext = ctx.request_context.lifespan_context
 
-    source_repository = SourceRepository(mcp_context.session)
     source_service = SourceService(
-        mcp_context.app_context.get_clone_dir(), source_repository
+        clone_dir=mcp_context.app_context.get_clone_dir(),
+        session_factory=lambda: mcp_context.session,
     )
-    repository = IndexRepository(mcp_context.session)
-    service = IndexService(
-        repository=repository,
+    # Create snippet application service
+    snippet_application_service = create_snippet_application_service(
+        mcp_context.session
+    )
+    service = create_indexing_application_service(
+        app_context=mcp_context.app_context,
+        session=mcp_context.session,
         source_service=source_service,
-        keyword_search_provider=keyword_search_factory(
-            mcp_context.app_context, mcp_context.session
-        ),
-        code_search_service=embedding_factory(
-            task_name="code",
-            app_context=mcp_context.app_context,
-            session=mcp_context.session,
-        ),
-        text_search_service=embedding_factory(
-            task_name="text",
-            app_context=mcp_context.app_context,
-            session=mcp_context.session,
-        ),
-        enrichment_service=enrichment_factory(mcp_context.app_context),
+        snippet_application_service=snippet_application_service,
     )
 
-    search_request = SearchRequest(
+    search_request = MultiSearchRequest(
         keywords=keywords,
         code_query="\n".join(related_file_contents),
         text_query=user_intent,
@@ -166,7 +188,7 @@ async def search(
     return output
 
 
-def output_fusion(snippets: list[SearchResult]) -> str:
+def output_fusion(snippets: list[MultiSearchResult]) -> str:
     """Fuse the snippets into a single output."""
     return "\n\n".join(f"{snippet.uri}\n{snippet.content}" for snippet in snippets)
 

@@ -7,16 +7,29 @@ from typing import Generator
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    create_async_engine,
+    async_sessionmaker,
+)
 from sqlalchemy.orm import sessionmaker
 
 from kodit.config import AppContext
-from kodit.database import Base
+from kodit.domain.entities import Base
 
 # Need to import these models to create the tables
-import kodit.indexing.indexing_models
-import kodit.embedding.embedding_models
-import kodit.source.source_models
+from kodit.domain.entities import (
+    Author,
+    AuthorFileMapping,
+    Embedding,
+    EmbeddingType,
+    File,
+    Index,
+    Snippet,
+    Source,
+    SourceType,
+)
 
 
 @pytest.fixture
@@ -44,7 +57,9 @@ async def engine() -> AsyncGenerator[AsyncEngine, None]:
 @pytest.fixture
 async def session(engine: AsyncEngine) -> AsyncGenerator[AsyncSession, None]:
     """Create a test database session."""
-    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async_session = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
 
     async with async_session() as session:
         yield session
