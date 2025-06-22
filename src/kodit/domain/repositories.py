@@ -11,6 +11,7 @@ from kodit.domain.entities import (
     Source,
     SourceType,
 )
+from kodit.domain.value_objects import SnippetListItem
 
 T = TypeVar("T")
 
@@ -84,6 +85,23 @@ class SnippetRepository(GenericRepository[Snippet]):
 
     async def delete_by_index(self, index_id: int) -> None:
         """Delete all snippets for an index."""
+        raise NotImplementedError
+
+    async def list_snippets(
+        self, file_path: str | None = None, source_uri: str | None = None
+    ) -> Sequence[SnippetListItem]:
+        """List snippets with optional filtering by file path and source URI.
+
+        Args:
+            file_path: Optional file or directory path to filter by. Can be relative
+            (uri) or absolute (cloned_path).
+            source_uri: Optional source URI to filter by. If None, returns snippets from
+            all sources.
+
+        Returns:
+            A sequence of SnippetListItem instances matching the criteria
+
+        """
         raise NotImplementedError
 
 
