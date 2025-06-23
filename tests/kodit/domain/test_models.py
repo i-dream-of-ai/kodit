@@ -21,6 +21,8 @@ from kodit.domain.value_objects import (
     VectorSearchResult,
     EnrichmentRequest,
     EnrichmentResponse,
+    SnippetSearchFilters,
+    MultiSearchRequest,
 )
 
 
@@ -57,11 +59,12 @@ class TestFile:
             created_at=now,
             updated_at=now,
             source_id=1,
-            cloned_path="/tmp/test.txt",
             mime_type="text/plain",
             uri="file:///test.txt",
+            cloned_path="/tmp/test.txt",
             sha256="abc123",
             size_bytes=100,
+            extension="txt",
         )
 
         assert file.source_id == 1
@@ -70,6 +73,7 @@ class TestFile:
         assert file.cloned_path == "/tmp/test.txt"
         assert file.sha256 == "abc123"
         assert file.size_bytes == 100
+        assert file.extension == "txt"
 
 
 class TestSnippet:
@@ -158,3 +162,41 @@ class TestEnrichmentModels:
         response = EnrichmentResponse(snippet_id=1, text="enriched content")
         assert response.snippet_id == 1
         assert response.text == "enriched content"
+
+
+class TestSnippetSearchFilters:
+    """Test SnippetSearchFilters value object."""
+
+    def test_create_filters(self):
+        filters = SnippetSearchFilters(
+            language="python",
+            author="alice",
+            created_after=datetime(2023, 1, 1),
+            created_before=datetime(2023, 12, 31),
+            source_repo="github.com/example/repo",
+        )
+        assert filters.language == "python"
+        assert filters.author == "alice"
+        assert filters.created_after == datetime(2023, 1, 1)
+        assert filters.created_before == datetime(2023, 12, 31)
+        assert filters.source_repo == "github.com/example/repo"
+
+    def test_equality(self):
+        f1 = SnippetSearchFilters(language="python", author="alice")
+        f2 = SnippetSearchFilters(language="python", author="alice")
+        f3 = SnippetSearchFilters(language="go", author="bob")
+        assert f1 == f2
+        assert f1 != f3
+
+    def test_multi_search_request_with_filters(self):
+        filters = SnippetSearchFilters(language="python", author="alice")
+        request = MultiSearchRequest(
+            text_query="test query",
+            code_query="def test(): pass",
+            keywords=["test", "python"],
+            filters=filters,
+        )
+        assert request.text_query == "test query"
+        assert request.code_query == "def test(): pass"
+        assert request.keywords == ["test", "python"]
+        assert request.filters == filters

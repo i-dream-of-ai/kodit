@@ -24,7 +24,7 @@ from kodit.config import (
 )
 from kodit.domain.errors import EmptySourceError
 from kodit.domain.services.source_service import SourceService
-from kodit.domain.value_objects import MultiSearchRequest
+from kodit.domain.value_objects import MultiSearchRequest, SnippetSearchFilters
 from kodit.infrastructure.indexing.indexing_factory import (
     create_indexing_application_service,
 )
@@ -179,13 +179,31 @@ def search() -> None:
 @search.command()
 @click.argument("query")
 @click.option("--top-k", default=10, help="Number of snippets to retrieve")
+@click.option(
+    "--language", help="Filter by programming language (e.g., python, go, javascript)"
+)
+@click.option("--author", help="Filter by author name")
+@click.option(
+    "--created-after", help="Filter snippets created after this date (YYYY-MM-DD)"
+)
+@click.option(
+    "--created-before", help="Filter snippets created before this date (YYYY-MM-DD)"
+)
+@click.option(
+    "--source-repo", help="Filter by source repository (e.g., github.com/example/repo)"
+)
 @with_app_context
 @with_session
-async def code(
+async def code(  # noqa: PLR0913
     session: AsyncSession,
     app_context: AppContext,
     query: str,
     top_k: int,
+    language: str | None,
+    author: str | None,
+    created_after: str | None,
+    created_before: str | None,
+    source_repo: str | None,
 ) -> None:
     """Search for snippets using semantic code search.
 
@@ -204,7 +222,18 @@ async def code(
         snippet_application_service=snippet_service,
     )
 
-    snippets = await service.search(MultiSearchRequest(code_query=query, top_k=top_k))
+    # Create filters if any filter parameters are provided
+    filters = SnippetSearchFilters.from_cli_params(
+        language=language,
+        author=author,
+        created_after=created_after,
+        created_before=created_before,
+        source_repo=source_repo,
+    )
+
+    snippets = await service.search(
+        MultiSearchRequest(code_query=query, top_k=top_k, filters=filters)
+    )
 
     if len(snippets) == 0:
         click.echo("No snippets found")
@@ -222,13 +251,31 @@ async def code(
 @search.command()
 @click.argument("keywords", nargs=-1)
 @click.option("--top-k", default=10, help="Number of snippets to retrieve")
+@click.option(
+    "--language", help="Filter by programming language (e.g., python, go, javascript)"
+)
+@click.option("--author", help="Filter by author name")
+@click.option(
+    "--created-after", help="Filter snippets created after this date (YYYY-MM-DD)"
+)
+@click.option(
+    "--created-before", help="Filter snippets created before this date (YYYY-MM-DD)"
+)
+@click.option(
+    "--source-repo", help="Filter by source repository (e.g., github.com/example/repo)"
+)
 @with_app_context
 @with_session
-async def keyword(
+async def keyword(  # noqa: PLR0913
     session: AsyncSession,
     app_context: AppContext,
     keywords: list[str],
     top_k: int,
+    language: str | None,
+    author: str | None,
+    created_after: str | None,
+    created_before: str | None,
+    source_repo: str | None,
 ) -> None:
     """Search for snippets using keyword search."""
     log_event("kodit.cli.search.keyword")
@@ -244,7 +291,18 @@ async def keyword(
         snippet_application_service=snippet_service,
     )
 
-    snippets = await service.search(MultiSearchRequest(keywords=keywords, top_k=top_k))
+    # Create filters if any filter parameters are provided
+    filters = SnippetSearchFilters.from_cli_params(
+        language=language,
+        author=author,
+        created_after=created_after,
+        created_before=created_before,
+        source_repo=source_repo,
+    )
+
+    snippets = await service.search(
+        MultiSearchRequest(keywords=keywords, top_k=top_k, filters=filters)
+    )
 
     if len(snippets) == 0:
         click.echo("No snippets found")
@@ -262,13 +320,31 @@ async def keyword(
 @search.command()
 @click.argument("query")
 @click.option("--top-k", default=10, help="Number of snippets to retrieve")
+@click.option(
+    "--language", help="Filter by programming language (e.g., python, go, javascript)"
+)
+@click.option("--author", help="Filter by author name")
+@click.option(
+    "--created-after", help="Filter snippets created after this date (YYYY-MM-DD)"
+)
+@click.option(
+    "--created-before", help="Filter snippets created before this date (YYYY-MM-DD)"
+)
+@click.option(
+    "--source-repo", help="Filter by source repository (e.g., github.com/example/repo)"
+)
 @with_app_context
 @with_session
-async def text(
+async def text(  # noqa: PLR0913
     session: AsyncSession,
     app_context: AppContext,
     query: str,
     top_k: int,
+    language: str | None,
+    author: str | None,
+    created_after: str | None,
+    created_before: str | None,
+    source_repo: str | None,
 ) -> None:
     """Search for snippets using semantic text search.
 
@@ -287,7 +363,18 @@ async def text(
         snippet_application_service=snippet_service,
     )
 
-    snippets = await service.search(MultiSearchRequest(text_query=query, top_k=top_k))
+    # Create filters if any filter parameters are provided
+    filters = SnippetSearchFilters.from_cli_params(
+        language=language,
+        author=author,
+        created_after=created_after,
+        created_before=created_before,
+        source_repo=source_repo,
+    )
+
+    snippets = await service.search(
+        MultiSearchRequest(text_query=query, top_k=top_k, filters=filters)
+    )
 
     if len(snippets) == 0:
         click.echo("No snippets found")
@@ -307,6 +394,19 @@ async def text(
 @click.option("--keywords", required=True, help="Comma separated list of keywords")
 @click.option("--code", required=True, help="Semantic code search query")
 @click.option("--text", required=True, help="Semantic text search query")
+@click.option(
+    "--language", help="Filter by programming language (e.g., python, go, javascript)"
+)
+@click.option("--author", help="Filter by author name")
+@click.option(
+    "--created-after", help="Filter snippets created after this date (YYYY-MM-DD)"
+)
+@click.option(
+    "--created-before", help="Filter snippets created before this date (YYYY-MM-DD)"
+)
+@click.option(
+    "--source-repo", help="Filter by source repository (e.g., github.com/example/repo)"
+)
 @with_app_context
 @with_session
 async def hybrid(  # noqa: PLR0913
@@ -316,6 +416,11 @@ async def hybrid(  # noqa: PLR0913
     keywords: str,
     code: str,
     text: str,
+    language: str | None,
+    author: str | None,
+    created_after: str | None,
+    created_before: str | None,
+    source_repo: str | None,
 ) -> None:
     """Search for snippets using hybrid search."""
     log_event("kodit.cli.search.hybrid")
@@ -334,12 +439,22 @@ async def hybrid(  # noqa: PLR0913
     # Parse keywords into a list of strings
     keywords_list = [k.strip().lower() for k in keywords.split(",")]
 
+    # Create filters if any filter parameters are provided
+    filters = SnippetSearchFilters.from_cli_params(
+        language=language,
+        author=author,
+        created_after=created_after,
+        created_before=created_before,
+        source_repo=source_repo,
+    )
+
     snippets = await service.search(
         MultiSearchRequest(
             keywords=keywords_list,
             code_query=code,
             text_query=text,
             top_k=top_k,
+            filters=filters,
         )
     )
 
