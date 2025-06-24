@@ -1,4 +1,4 @@
-"""Tests for the VectorChord vector search repository with real database."""
+"""Tests for the VectorChord BM25 repository with real database."""
 
 import socket
 import subprocess
@@ -18,16 +18,13 @@ from sqlalchemy.ext.asyncio import (
 
 from kodit.domain.entities import Base, Index, Snippet, File, Source, SourceType
 from kodit.domain.value_objects import (
-    VectorSearchQueryRequest,
-    VectorSearchResult,
-    VectorIndexRequest,
-    VectorSearchRequest,
+    BM25SearchRequest,
+    BM25SearchResult,
+    BM25IndexRequest,
+    BM25Document,
 )
-from kodit.infrastructure.embedding.vectorchord_vector_search_repository import (
-    VectorChordVectorSearchRepository,
-)
-from kodit.infrastructure.embedding.embedding_providers.hash_embedding_provider import (
-    HashEmbeddingProvider,
+from kodit.infrastructure.bm25.vectorchord_bm25_repository import (
+    VectorChordBM25Repository,
 )
 
 # Suppress the pytest-asyncio event_loop fixture deprecation warning
@@ -162,7 +159,7 @@ async def vectorchord_session(
 @pytest.fixture
 async def test_data(
     vectorchord_session: AsyncSession,
-) -> tuple[list[Snippet], VectorChordVectorSearchRepository]:
+) -> tuple[list[Snippet], VectorChordBM25Repository]:
     """Create test data and repository."""
     # Create test data
     source = Source(uri="test", cloned_path="test", source_type=SourceType.FOLDER)
@@ -187,7 +184,7 @@ async def test_data(
     vectorchord_session.add(index)
     await vectorchord_session.flush()
 
-    # Create snippets with varied content to test different aspects of vector search
+    # Create snippets with varied content to test different aspects of BM25
     snippets = [
         Snippet(
             file_id=file.id,
@@ -221,35 +218,27 @@ async def test_data(
     await vectorchord_session.commit()
 
     # Initialize repository
-    embedding_provider = HashEmbeddingProvider()
-    repository = VectorChordVectorSearchRepository(
-        task_name="code",
-        session=vectorchord_session,
-        embedding_provider=embedding_provider,
-    )
+    repository = VectorChordBM25Repository(session=vectorchord_session)
 
     # Index the documents
-    async for batch in repository.index_documents(
-        VectorIndexRequest(
-            documents=[
-                VectorSearchRequest(snippet_id=s.id, text=s.content) for s in snippets
-            ]
+    await repository.index_documents(
+        BM25IndexRequest(
+            documents=[BM25Document(snippet_id=s.id, text=s.content) for s in snippets]
         )
-    ):
-        pass
+    )
 
     return snippets, repository
 
 
 @pytest.mark.asyncio
 async def test_search_with_none_snippet_ids_returns_all_results(
-    test_data: tuple[list[Snippet], VectorChordVectorSearchRepository],
+    test_data: tuple[list[Snippet], VectorChordBM25Repository],
 ) -> None:
     """Test that search with None snippet_ids returns all results (no filtering)."""
     snippets, repository = test_data
 
     # Setup
-    request = VectorSearchQueryRequest(
+    request = BM25SearchRequest(
         query="Python programming",
         top_k=10,
         snippet_ids=None,  # No filtering
@@ -260,20 +249,20 @@ async def test_search_with_none_snippet_ids_returns_all_results(
 
     # Verify
     assert len(results) > 0
-    assert all(isinstance(result, VectorSearchResult) for result in results)
+    assert all(isinstance(result, BM25SearchResult) for result in results)
     # Should return multiple results since "Python programming" matches multiple snippets
     assert len(results) >= 3
 
 
 @pytest.mark.asyncio
 async def test_search_with_empty_snippet_ids_returns_no_results(
-    test_data: tuple[list[Snippet], VectorChordVectorSearchRepository],
+    test_data: tuple[list[Snippet], VectorChordBM25Repository],
 ) -> None:
     """Test that search with empty snippet_ids list returns no results."""
     snippets, repository = test_data
 
     # Setup
-    request = VectorSearchQueryRequest(
+    request = BM25SearchRequest(
         query="Python programming",
         top_k=10,
         snippet_ids=[],  # Empty list - should return no results
@@ -289,13 +278,13 @@ async def test_search_with_empty_snippet_ids_returns_no_results(
 
 @pytest.mark.asyncio
 async def test_search_with_filtered_snippet_ids_returns_matching_results(
-    test_data: tuple[list[Snippet], VectorChordVectorSearchRepository],
+    test_data: tuple[list[Snippet], VectorChordBM25Repository],
 ) -> None:
     """Test that search with specific snippet_ids returns only matching results."""
     snippets, repository = test_data
 
     # Setup - only search in snippets 0 and 2
-    request = VectorSearchQueryRequest(
+    request = BM25SearchRequest(
         query="Python programming",
         top_k=10,
         snippet_ids=[snippets[0].id, snippets[2].id],  # Only return snippets 0 and 2
@@ -306,7 +295,7 @@ async def test_search_with_filtered_snippet_ids_returns_matching_results(
 
     # Verify
     assert len(results) > 0
-    assert all(isinstance(result, VectorSearchResult) for result in results)
+    assert all(isinstance(result, BM25SearchResult) for result in results)
     # All returned snippet_ids should be in our filtered list
     returned_snippet_ids = [result.snippet_id for result in results]
     assert all(
@@ -317,13 +306,13 @@ async def test_search_with_filtered_snippet_ids_returns_matching_results(
 
 @pytest.mark.asyncio
 async def test_search_with_single_snippet_id_returns_one_result(
-    test_data: tuple[list[Snippet], VectorChordVectorSearchRepository],
+    test_data: tuple[list[Snippet], VectorChordBM25Repository],
 ) -> None:
     """Test that search with a single snippet_id returns only that result."""
     snippets, repository = test_data
 
     # Setup - only search in snippet 2 (which mentions "Guido van Rossum")
-    request = VectorSearchQueryRequest(
+    request = BM25SearchRequest(
         query="Guido van Rossum",
         top_k=10,
         snippet_ids=[snippets[2].id],  # Only return snippet 2
@@ -340,13 +329,13 @@ async def test_search_with_single_snippet_id_returns_one_result(
 
 @pytest.mark.asyncio
 async def test_search_with_nonexistent_snippet_ids_returns_no_results(
-    test_data: tuple[list[Snippet], VectorChordVectorSearchRepository],
+    test_data: tuple[list[Snippet], VectorChordBM25Repository],
 ) -> None:
     """Test that search with snippet_ids that don't exist returns no results."""
     snippets, repository = test_data
 
     # Setup
-    request = VectorSearchQueryRequest(
+    request = BM25SearchRequest(
         query="Python programming",
         top_k=10,
         snippet_ids=[99999, 100000],  # Non-existent snippet IDs
@@ -362,13 +351,13 @@ async def test_search_with_nonexistent_snippet_ids_returns_no_results(
 
 @pytest.mark.asyncio
 async def test_search_with_empty_query_returns_empty_list(
-    test_data: tuple[list[Snippet], VectorChordVectorSearchRepository],
+    test_data: tuple[list[Snippet], VectorChordBM25Repository],
 ) -> None:
     """Test that search with empty query returns empty list."""
     snippets, repository = test_data
 
     # Setup
-    request = VectorSearchQueryRequest(
+    request = BM25SearchRequest(
         query="",  # Empty query
         top_k=10,
         snippet_ids=None,
@@ -383,13 +372,13 @@ async def test_search_with_empty_query_returns_empty_list(
 
 @pytest.mark.asyncio
 async def test_search_with_whitespace_query_returns_empty_list(
-    test_data: tuple[list[Snippet], VectorChordVectorSearchRepository],
+    test_data: tuple[list[Snippet], VectorChordBM25Repository],
 ) -> None:
     """Test that search with whitespace-only query returns empty list."""
     snippets, repository = test_data
 
     # Setup
-    request = VectorSearchQueryRequest(
+    request = BM25SearchRequest(
         query="   ",  # Whitespace-only query
         top_k=10,
         snippet_ids=None,
@@ -404,13 +393,13 @@ async def test_search_with_whitespace_query_returns_empty_list(
 
 @pytest.mark.asyncio
 async def test_search_respects_top_k_limit(
-    test_data: tuple[list[Snippet], VectorChordVectorSearchRepository],
+    test_data: tuple[list[Snippet], VectorChordBM25Repository],
 ) -> None:
     """Test that search respects the top_k limit."""
     snippets, repository = test_data
 
     # Setup
-    request = VectorSearchQueryRequest(
+    request = BM25SearchRequest(
         query="Python",
         top_k=2,  # Limit to 2 results
         snippet_ids=None,
@@ -421,18 +410,18 @@ async def test_search_respects_top_k_limit(
 
     # Verify
     assert len(results) == 2  # Should be limited by top_k
-    assert all(isinstance(result, VectorSearchResult) for result in results)
+    assert all(isinstance(result, BM25SearchResult) for result in results)
 
 
 @pytest.mark.asyncio
 async def test_search_result_structure(
-    test_data: tuple[list[Snippet], VectorChordVectorSearchRepository],
+    test_data: tuple[list[Snippet], VectorChordBM25Repository],
 ) -> None:
     """Test that search results have the correct structure."""
     snippets, repository = test_data
 
     # Setup
-    request = VectorSearchQueryRequest(
+    request = BM25SearchRequest(
         query="Guido van Rossum", top_k=1, snippet_ids=[snippets[2].id]
     )
 
@@ -442,7 +431,7 @@ async def test_search_result_structure(
     # Verify
     assert len(results) == 1
     result = results[0]
-    assert isinstance(result, VectorSearchResult)
+    assert isinstance(result, BM25SearchResult)
     assert hasattr(result, "snippet_id")
     assert hasattr(result, "score")
     assert result.snippet_id == snippets[2].id
@@ -451,13 +440,13 @@ async def test_search_result_structure(
 
 @pytest.mark.asyncio
 async def test_search_with_mixed_existing_and_nonexistent_ids(
-    test_data: tuple[list[Snippet], VectorChordVectorSearchRepository],
+    test_data: tuple[list[Snippet], VectorChordBM25Repository],
 ) -> None:
     """Test that search with a mix of existing and non-existent snippet_ids works correctly."""
     snippets, repository = test_data
 
     # Setup - mix of existing and non-existent IDs
-    request = VectorSearchQueryRequest(
+    request = BM25SearchRequest(
         query="Python",
         top_k=10,
         snippet_ids=[
@@ -482,14 +471,14 @@ async def test_search_with_mixed_existing_and_nonexistent_ids(
 
 
 @pytest.mark.asyncio
-async def test_search_with_semantic_similarity_and_filtering(
-    test_data: tuple[list[Snippet], VectorChordVectorSearchRepository],
+async def test_search_with_phrase_matching_and_filtering(
+    test_data: tuple[list[Snippet], VectorChordBM25Repository],
 ) -> None:
-    """Test that semantic similarity works correctly with snippet filtering."""
+    """Test that phrase matching works correctly with snippet filtering."""
     snippets, repository = test_data
 
-    # Setup - search for "data science" which should match snippet 3 semantically
-    request = VectorSearchQueryRequest(
+    # Setup - search for "data science" which should match snippet 3
+    request = BM25SearchRequest(
         query="data science",
         top_k=10,
         snippet_ids=[snippets[3].id],  # Only snippet 3 mentions "data science"
@@ -501,18 +490,20 @@ async def test_search_with_semantic_similarity_and_filtering(
     # Verify
     assert len(results) == 1
     assert results[0].snippet_id == snippets[3].id
-    assert isinstance(results[0].score, (int, float))  # Should have a numeric score
+    assert isinstance(
+        results[0].score, (int, float)
+    )  # Should have a numeric score (can be negative)
 
 
 @pytest.mark.asyncio
 async def test_search_with_case_insensitive_filtering(
-    test_data: tuple[list[Snippet], VectorChordVectorSearchRepository],
+    test_data: tuple[list[Snippet], VectorChordBM25Repository],
 ) -> None:
     """Test that case insensitive search works with filtering."""
     snippets, repository = test_data
 
     # Setup - search for "PYTHON" (uppercase) with filtering
-    request = VectorSearchQueryRequest(
+    request = BM25SearchRequest(
         query="PYTHON",
         top_k=10,
         snippet_ids=[snippets[0].id, snippets[1].id],  # Only first two snippets
@@ -529,129 +520,3 @@ async def test_search_with_case_insensitive_filtering(
         snippet_id in [snippets[0].id, snippets[1].id]
         for snippet_id in returned_snippet_ids
     )
-
-
-@pytest.mark.asyncio
-async def test_search_results_consistency_with_filtering(
-    test_data: tuple[list[Snippet], VectorChordVectorSearchRepository],
-) -> None:
-    """Test that search results are consistent whether filtering is applied or not.
-
-    This test captures a bug where filtering by snippet_ids changes the vector search
-    results even when the original result matches the filter. The results should be
-    the same when:
-    1. Search without filtering, then filter results in Python
-    2. Search with filtering applied at the database level
-
-    The top result from the unfiltered search should still be the top result when
-    filtering is applied, if that result is in the filtered set.
-    """
-    snippets, repository = test_data
-
-    # First, search without any filtering
-    unfiltered_request = VectorSearchQueryRequest(
-        query="Python programming",
-        top_k=5,
-        snippet_ids=None,  # No filtering
-    )
-    unfiltered_results = await repository.search(unfiltered_request)
-
-    assert len(unfiltered_results) > 0
-    top_unfiltered_result = unfiltered_results[0]
-
-    # Get the snippet IDs that should be in our filtered set
-    # Let's filter to include the top result and a few others
-    filtered_snippet_ids = [top_unfiltered_result.snippet_id]
-    for result in unfiltered_results[1:3]:  # Add next 2 results
-        filtered_snippet_ids.append(result.snippet_id)
-
-    # Now search with filtering applied at the database level
-    filtered_request = VectorSearchQueryRequest(
-        query="Python programming",
-        top_k=5,
-        snippet_ids=filtered_snippet_ids,
-    )
-    filtered_results = await repository.search(filtered_request)
-
-    assert len(filtered_results) > 0
-
-    # The top result from the unfiltered search should still be the top result
-    # when filtering is applied, since it's in our filtered set
-    assert filtered_results[0].snippet_id == top_unfiltered_result.snippet_id, (
-        f"Top result changed when filtering was applied. "
-        f"Unfiltered top: {top_unfiltered_result.snippet_id} (score: {top_unfiltered_result.score}), "
-        f"Filtered top: {filtered_results[0].snippet_id} (score: {filtered_results[0].score})"
-    )
-
-    # The scores should also be the same (or very close due to floating point precision)
-    assert abs(filtered_results[0].score - top_unfiltered_result.score) < 1e-6, (
-        f"Score changed when filtering was applied. "
-        f"Unfiltered score: {top_unfiltered_result.score}, "
-        f"Filtered score: {filtered_results[0].score}"
-    )
-
-
-@pytest.mark.asyncio
-async def test_search_with_application_level_filtering_bug(
-    test_data: tuple[list[Snippet], VectorChordVectorSearchRepository],
-) -> None:
-    """Test that demonstrates the bug where application-level filtering changes vector search results.
-
-    This test simulates what happens in the application service when language filters
-    are applied. The bug occurs because:
-    1. Application service calls snippet_application_service.search() to get filtered snippet IDs
-    2. This returns a limited set of snippets based on metadata filters (language, etc.)
-    3. Vector search is then performed only within this limited set
-    4. This can change the ranking because the vector search context is different
-
-    The issue is that the snippet_application_service.search() doesn't consider the actual
-    search query - it just filters by metadata and applies top_k, which can exclude
-    snippets that would be the top results from vector search.
-    """
-    snippets, repository = test_data
-
-    # Simulate what the application service does:
-    # 1. First, get all snippet IDs (this would be the "unfiltered" case)
-    all_snippet_ids = [s.id for s in snippets]
-
-    # 2. Search without any filtering (this is what should happen without language filter)
-    unfiltered_request = VectorSearchQueryRequest(
-        query="data science",  # This should match snippet 3 best
-        top_k=3,
-        snippet_ids=None,  # No filtering
-    )
-    unfiltered_results = await repository.search(unfiltered_request)
-
-    assert len(unfiltered_results) > 0
-    top_unfiltered_result = unfiltered_results[0]
-
-    # 3. Now simulate what happens with language filtering:
-    # The application service would call snippet_application_service.search()
-    # which returns a limited set of snippets based on metadata filters
-    # For this test, let's simulate that only the first 3 snippets are returned
-    # (as if they were the only Python files, for example)
-    limited_snippet_ids = [snippets[0].id, snippets[1].id, snippets[2].id]
-
-    # 4. Search with this limited set (this is what happens with language filter)
-    filtered_request = VectorSearchQueryRequest(
-        query="data science",
-        top_k=3,
-        snippet_ids=limited_snippet_ids,
-    )
-    filtered_results = await repository.search(filtered_request)
-
-    # 5. The bug: if the top result from unfiltered search is in our limited set,
-    # it should still be the top result when filtering is applied
-    if top_unfiltered_result.snippet_id in limited_snippet_ids:
-        # This should be the case, but the bug causes it to fail
-        assert filtered_results[0].snippet_id == top_unfiltered_result.snippet_id, (
-            f"BUG: Top result changed when filtering was applied even though "
-            f"the original top result ({top_unfiltered_result.snippet_id}) "
-            f"was in the filtered set. "
-            f"Unfiltered top: {top_unfiltered_result.snippet_id} (score: {top_unfiltered_result.score}), "
-            f"Filtered top: {filtered_results[0].snippet_id} (score: {filtered_results[0].score})"
-        )
-    else:
-        # If the top result is not in the limited set, that's expected behavior
-        # But we should still get consistent results within the limited set
-        assert len(filtered_results) > 0

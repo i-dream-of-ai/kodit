@@ -1,5 +1,7 @@
 """Application service for indexing operations."""
 
+from dataclasses import replace
+
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -328,27 +330,30 @@ class IndexingApplicationService:
         """
         log_event("kodit.index.search")
 
-        # If filters are provided, use the snippet repository search
+        # Get filtered snippet IDs if filters are provided
+        filtered_snippet_ids: list[int] | None = None
         if request.filters:
-            snippet_results = await self.snippet_application_service.search(request)
-            return [
-                MultiSearchResult(
-                    id=snippet.id,
-                    uri=snippet.source_uri,
-                    content=snippet.content,
-                    original_scores=[1.0],  # Default score for filtered results
-                )
-                for snippet in snippet_results
-            ]
+            prefilter_request = replace(request, top_k=None)
+            snippet_results = await self.snippet_application_service.search(
+                prefilter_request
+            )
+            filtered_snippet_ids = [snippet.id for snippet in snippet_results]
 
-        # Otherwise use the existing fusion logic
+            # Note: We don't return early here even if filtered_snippet_ids is empty
+            # because the BM25 service should handle empty snippet_ids gracefully
+
+        # Use the existing fusion logic with optional pre-filtering
         fusion_list: list[list[FusionRequest]] = []
         if request.keywords:
             # Gather results for each keyword
             result_ids: list[BM25SearchResult] = []
             for keyword in request.keywords:
                 results = await self.bm25_service.search(
-                    BM25SearchRequest(query=keyword, top_k=request.top_k)
+                    BM25SearchRequest(
+                        query=keyword,
+                        top_k=request.top_k,
+                        snippet_ids=filtered_snippet_ids,
+                    )
                 )
                 result_ids.extend(results)
 
@@ -359,7 +364,11 @@ class IndexingApplicationService:
         # Compute embedding for semantic query
         if request.code_query:
             query_embedding = await self.code_search_service.search(
-                VectorSearchQueryRequest(query=request.code_query, top_k=request.top_k)
+                VectorSearchQueryRequest(
+                    query=request.code_query,
+                    top_k=request.top_k,
+                    snippet_ids=filtered_snippet_ids,
+                )
             )
             fusion_list.append(
                 [FusionRequest(id=x.snippet_id, score=x.score) for x in query_embedding]
@@ -367,7 +376,11 @@ class IndexingApplicationService:
 
         if request.text_query:
             query_embedding = await self.text_search_service.search(
-                VectorSearchQueryRequest(query=request.text_query, top_k=request.top_k)
+                VectorSearchQueryRequest(
+                    query=request.text_query,
+                    top_k=request.top_k,
+                    snippet_ids=filtered_snippet_ids,
+                )
             )
             fusion_list.append(
                 [FusionRequest(id=x.snippet_id, score=x.score) for x in query_embedding]

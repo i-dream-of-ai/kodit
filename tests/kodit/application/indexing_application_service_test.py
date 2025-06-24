@@ -14,7 +14,14 @@ from kodit.application.services.indexing_application_service import (
 )
 from kodit.domain.entities import Snippet, Source, SourceType
 from kodit.domain.errors import EmptySourceError
-from kodit.domain.value_objects import IndexView
+from kodit.domain.value_objects import (
+    IndexView,
+    MultiSearchRequest,
+    SnippetSearchFilters,
+    BM25SearchResult,
+    FusionRequest,
+    FusionResult,
+)
 from kodit.domain.services.bm25_service import BM25DomainService
 from kodit.domain.services.embedding_service import EmbeddingDomainService
 from kodit.domain.services.enrichment_service import EnrichmentDomainService
@@ -414,3 +421,271 @@ async def test_run_index_with_empty_snippets_list(
     mock_code_search_service.index_documents.assert_not_called()
     mock_text_search_service.index_documents.assert_not_called()
     mock_enrichment_service.enrich_documents.assert_not_called()
+
+
+@pytest.mark.asyncio
+def test_keyword_search_with_filters_calls_bm25(
+    indexing_application_service,
+    mock_bm25_service,
+    mock_snippet_application_service,
+):
+    request = MultiSearchRequest(
+        keywords=["test"], top_k=10, filters=SnippetSearchFilters(language="python")
+    )
+    mock_bm25_service.search.return_value = []
+    mock_snippet_application_service.search.return_value = []
+
+    # Run
+    import asyncio
+
+    asyncio.run(indexing_application_service.search(request))
+    # Assert
+    mock_bm25_service.search.assert_called()
+
+
+@pytest.mark.asyncio
+def test_code_search_with_filters_calls_code_search(
+    indexing_application_service,
+    mock_code_search_service,
+    mock_snippet_application_service,
+):
+    request = MultiSearchRequest(
+        code_query="def foo(): pass",
+        top_k=10,
+        filters=SnippetSearchFilters(language="python"),
+    )
+    mock_code_search_service.search.return_value = []
+    mock_snippet_application_service.search.return_value = []
+    import asyncio
+
+    asyncio.run(indexing_application_service.search(request))
+    mock_code_search_service.search.assert_called()
+
+
+@pytest.mark.asyncio
+def test_text_search_with_filters_calls_text_search(
+    indexing_application_service,
+    mock_text_search_service,
+    mock_snippet_application_service,
+):
+    request = MultiSearchRequest(
+        text_query="find something",
+        top_k=10,
+        filters=SnippetSearchFilters(language="python"),
+    )
+    mock_text_search_service.search.return_value = []
+    mock_snippet_application_service.search.return_value = []
+    import asyncio
+
+    asyncio.run(indexing_application_service.search(request))
+    mock_text_search_service.search.assert_called()
+
+
+@pytest.mark.asyncio
+def test_hybrid_search_with_filters_calls_all_searches(
+    indexing_application_service,
+    mock_bm25_service,
+    mock_code_search_service,
+    mock_text_search_service,
+    mock_snippet_application_service,
+):
+    request = MultiSearchRequest(
+        keywords=["test"],
+        code_query="def foo(): pass",
+        text_query="find something",
+        top_k=10,
+        filters=SnippetSearchFilters(language="python"),
+    )
+    mock_bm25_service.search.return_value = []
+    mock_code_search_service.search.return_value = []
+    mock_text_search_service.search.return_value = []
+    mock_snippet_application_service.search.return_value = []
+    import asyncio
+
+    asyncio.run(indexing_application_service.search(request))
+    mock_bm25_service.search.assert_called()
+    mock_code_search_service.search.assert_called()
+    mock_text_search_service.search.assert_called()
+
+
+@pytest.mark.asyncio
+def test_filter_should_pre_filter_before_top_k(
+    indexing_application_service,
+    mock_bm25_service,
+    mock_snippet_application_service,
+    mock_indexing_domain_service,
+):
+    """
+    Test that filtering is now applied before top_k, so Python snippets can be returned
+    even if Java snippets would have higher scores in an unfiltered search.
+    """
+    # 10 java snippets (ids 1-10) match the keyword well, 10 python snippets (ids 11-20) do not match at all
+    # Only python snippets should be returned if filtering is correct
+    request = MultiSearchRequest(
+        keywords=["foobar"], top_k=10, filters=SnippetSearchFilters(language="python")
+    )
+
+    # Mock the snippet application service to return filtered snippet IDs
+    # This simulates what happens when language filtering is applied
+    mock_snippet_application_service.search.return_value = [
+        MagicMock(id=i)
+        for i in range(11, 21)  # Python snippets (ids 11-20)
+    ]
+
+    # BM25 now receives filtered snippet_ids and should return only python snippet ids (11-20) as top_k
+    mock_bm25_service.search.return_value = [
+        MagicMock(snippet_id=i, score=1.0) for i in range(11, 21)
+    ]
+
+    # Mock the fusion results to return the filtered snippets
+    mock_fusion_results = [
+        MagicMock(id=i, score=1.0, original_scores=[1.0]) for i in range(11, 21)
+    ]
+    mock_indexing_domain_service.perform_fusion.return_value = mock_fusion_results
+
+    # Mock the DB to return the filtered snippets (10 Python snippets with IDs 11-20)
+    mock_indexing_domain_service.get_snippets_by_ids.return_value = [
+        (
+            {
+                "id": i,
+                "source_id": 1,
+                "mime_type": "text/plain",
+                "uri": f"test{i}.py",
+                "cloned_path": f"/tmp/test_repo/test{i}.py",
+                "sha256": "abc123",
+                "size_bytes": 100,
+                "extension": "py",
+                "created_at": "2023-01-01",
+                "updated_at": "2023-01-01",
+                "source_uri": "https://github.com/test/repo.git",
+                "source_cloned_path": "/tmp/test_repo",
+            },
+            {
+                "id": i,
+                "file_id": 1,
+                "index_id": 1,
+                "content": f"def test{i}(): pass",
+                "created_at": "2023-01-01",
+                "updated_at": "2023-01-01",
+            },
+        )
+        for i in range(11, 21)  # Python snippets (ids 11-20)
+    ]
+
+    # Run
+    import asyncio
+
+    result = asyncio.run(indexing_application_service.search(request))
+
+    # Should return 10 Python snippets (ids 11-20)
+    assert len(result) == 10
+    assert all(snippet.id >= 11 and snippet.id <= 20 for snippet in result)
+
+    # Verify that BM25 was called with filtered snippet_ids
+    mock_bm25_service.search.assert_called_once()
+    call_args = mock_bm25_service.search.call_args[0][0]
+    assert call_args.snippet_ids == list(range(11, 21))  # Python snippet IDs (11-20)
+
+
+@pytest.mark.asyncio
+def test_vector_search_with_language_filtering_bug(
+    indexing_application_service,
+    mock_text_search_service,
+    mock_snippet_application_service,
+    mock_indexing_domain_service,
+):
+    """
+    Test that demonstrates the bug where language filtering changes vector search results
+    even when the original result matches the language filter.
+    This test should fail because the current logic excludes the best match.
+    """
+    # Create a request with text query and language filter
+    request = MultiSearchRequest(
+        text_query="data science",  # This should match snippet with ID 4 best
+        top_k=3,
+        filters=SnippetSearchFilters(language="python"),
+    )
+
+    # Mock the snippet application service to return a limited set of snippets
+    # This simulates what happens when language filtering is applied
+    # The snippet service returns snippets 1, 2, 3, 4 (all Python files)
+    # Snippet 4 should be the best match for "data science" and should be included
+    mock_snippet_application_service.search.return_value = [
+        MagicMock(id=1),  # Python snippet 1
+        MagicMock(id=2),  # Python snippet 2
+        MagicMock(id=3),  # Python snippet 3
+        MagicMock(
+            id=4
+        ),  # Python snippet 4 - should be the best match for "data science"
+    ]
+
+    # Mock the vector search service to return results based on the filtered snippet IDs
+    # Snippet 4 should be the best match for "data science" and should be ranked first
+    mock_text_search_service.search.return_value = [
+        MagicMock(snippet_id=4, score=0.95),  # Best match for "data science"
+        MagicMock(snippet_id=2, score=0.8),  # Second best match
+        MagicMock(snippet_id=1, score=0.6),  # Third best match
+        MagicMock(snippet_id=3, score=0.4),  # Fourth best match
+    ]
+
+    # Mock the fusion results to match what the vector search returns
+    mock_fusion_results = [
+        MagicMock(id=4, score=0.95, original_scores=[0.95]),
+        MagicMock(id=2, score=0.8, original_scores=[0.8]),
+        MagicMock(id=1, score=0.6, original_scores=[0.6]),
+        MagicMock(id=3, score=0.4, original_scores=[0.4]),
+    ]
+    mock_indexing_domain_service.perform_fusion.return_value = mock_fusion_results
+
+    # Mock the DB to return only the top 3 snippets (matching top_k=3)
+    mock_indexing_domain_service.get_snippets_by_ids.return_value = [
+        (
+            {
+                "id": 4,
+                "uri": "test4.py",
+                "content": "Python supports multiple programming paradigms",
+            },
+            {"id": 4, "content": "Python supports multiple programming paradigms"},
+        ),
+        (
+            {
+                "id": 2,
+                "uri": "test2.py",
+                "content": "Python is a high-level programming language",
+            },
+            {"id": 2, "content": "Python is a high-level programming language"},
+        ),
+        (
+            {
+                "id": 1,
+                "uri": "test1.py",
+                "content": "The Python programming language was created by Guido van Rossum",
+            },
+            {
+                "id": 1,
+                "content": "The Python programming language was created by Guido van Rossum",
+            },
+        ),
+    ]
+
+    # Run the search
+    import asyncio
+
+    result = asyncio.run(indexing_application_service.search(request))
+
+    # Verify that the vector search was called with the filtered snippet IDs
+    mock_text_search_service.search.assert_called_once()
+    call_args = mock_text_search_service.search.call_args[0][0]
+    assert call_args.snippet_ids == [1, 2, 3, 4]  # All snippet IDs
+
+    # The fix: snippet 4 (which is the best match for "data science")
+    # should now be included in the search because it's in the filtered snippet IDs
+    # and it IS a Python file
+
+    # This assertion should PASS because the fix works correctly:
+    # We're getting snippet 4 as the top result, which is the best match for "data science"
+    assert result[0].id == 4, (
+        f"Expected snippet 4 to be the top result for 'data science', "
+        f"but got snippet {result[0].id}. "
+        f"This demonstrates that the filtering fix is working correctly."
+    )
