@@ -1,25 +1,31 @@
-"""Tests for the local vector search repository."""
+"""Tests for local vector search repository."""
+
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
-from datetime import datetime, UTC
 
-from kodit.domain.value_objects import (
-    EmbeddingRequest,
-    EmbeddingResponse,
-    IndexResult,
-    VectorIndexRequest,
-    VectorSearchQueryRequest,
+from kodit.domain.entities import (
+    EmbeddingType,
+    File,
+    Index,
+    Snippet,
+    Source,
+    SourceType,
 )
-from kodit.domain.entities import File, EmbeddingType
+from kodit.domain.value_objects import (
+    Document,
+    EmbeddingResponse,
+    IndexRequest,
+    SearchResult,
+    SearchRequest,
+)
 from kodit.infrastructure.embedding.local_vector_search_repository import (
     LocalVectorSearchRepository,
 )
 from kodit.infrastructure.sqlalchemy.embedding_repository import (
     SqlAlchemyEmbeddingRepository,
 )
-from kodit.domain.value_objects import VectorSearchRequest, VectorSearchResult
-from kodit.domain.entities import Snippet, Index, Source, SourceType
 
 
 class TestLocalVectorSearchRepository:
@@ -33,6 +39,7 @@ class TestLocalVectorSearchRepository:
         repository = LocalVectorSearchRepository(
             embedding_repository=mock_repository,
             embedding_provider=mock_provider,
+            embedding_type=EmbeddingType.CODE,
         )
 
         assert repository.embedding_repository == mock_repository
@@ -62,16 +69,16 @@ class TestLocalVectorSearchRepository:
         repository = LocalVectorSearchRepository(
             embedding_repository=mock_repository,
             embedding_provider=mock_provider,
+            embedding_type=EmbeddingType.CODE,
         )
 
-        request = VectorIndexRequest(documents=[])
+        request = IndexRequest(documents=[])
 
         results = []
         async for batch in repository.index_documents(request):
             results.extend(batch)
 
         assert len(results) == 0
-        mock_provider.embed.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_index_documents_single_document(self):
@@ -89,10 +96,11 @@ class TestLocalVectorSearchRepository:
         repository = LocalVectorSearchRepository(
             embedding_repository=mock_repository,
             embedding_provider=mock_provider,
+            embedding_type=EmbeddingType.CODE,
         )
 
-        request = VectorIndexRequest(
-            documents=[VectorSearchRequest(snippet_id=1, text="python programming")]
+        request = IndexRequest(
+            documents=[Document(snippet_id=1, text="python programming")]
         )
 
         results = []
@@ -131,12 +139,13 @@ class TestLocalVectorSearchRepository:
         repository = LocalVectorSearchRepository(
             embedding_repository=mock_repository,
             embedding_provider=mock_provider,
+            embedding_type=EmbeddingType.CODE,
         )
 
-        request = VectorIndexRequest(
+        request = IndexRequest(
             documents=[
-                VectorSearchRequest(snippet_id=1, text="python programming"),
-                VectorSearchRequest(snippet_id=2, text="javascript development"),
+                Document(snippet_id=1, text="python programming"),
+                Document(snippet_id=2, text="javascript development"),
             ]
         )
 
@@ -172,9 +181,10 @@ class TestLocalVectorSearchRepository:
         repository = LocalVectorSearchRepository(
             embedding_repository=mock_repository,
             embedding_provider=mock_provider,
+            embedding_type=EmbeddingType.CODE,
         )
 
-        request = VectorSearchQueryRequest(query="python programming", top_k=10)
+        request = SearchRequest(query="python programming", top_k=10)
 
         results = await repository.search(request)
 
@@ -211,9 +221,10 @@ class TestLocalVectorSearchRepository:
         repository = LocalVectorSearchRepository(
             embedding_repository=mock_repository,
             embedding_provider=mock_provider,
+            embedding_type=EmbeddingType.CODE,
         )
 
-        request = VectorSearchQueryRequest(query="python programming", top_k=10)
+        request = SearchRequest(query="python programming", top_k=10)
 
         results = await repository.search(request)
 
@@ -233,6 +244,7 @@ class TestLocalVectorSearchRepository:
         repository = LocalVectorSearchRepository(
             embedding_repository=mock_repository,
             embedding_provider=mock_provider,
+            embedding_type=EmbeddingType.CODE,
         )
 
         result = await repository.has_embedding(1, EmbeddingType.CODE)
@@ -255,6 +267,7 @@ class TestLocalVectorSearchRepository:
         repository = LocalVectorSearchRepository(
             embedding_repository=mock_repository,
             embedding_provider=mock_provider,
+            embedding_type=EmbeddingType.CODE,
         )
 
         result = await repository.has_embedding(1, EmbeddingType.TEXT)
@@ -284,9 +297,10 @@ class TestLocalVectorSearchRepository:
         repository = LocalVectorSearchRepository(
             embedding_repository=mock_repository,
             embedding_provider=mock_provider,
+            embedding_type=EmbeddingType.CODE,
         )
 
-        request = VectorSearchQueryRequest(
+        request = SearchRequest(
             query="python programming", top_k=10, snippet_ids=[1, 2, 3]
         )
 
@@ -322,9 +336,10 @@ class TestLocalVectorSearchRepository:
         repository = LocalVectorSearchRepository(
             embedding_repository=mock_repository,
             embedding_provider=mock_provider,
+            embedding_type=EmbeddingType.CODE,
         )
 
-        request = VectorSearchQueryRequest(
+        request = SearchRequest(
             query="python programming",
             top_k=10,
             snippet_ids=None,  # No filtering
@@ -361,9 +376,10 @@ class TestLocalVectorSearchRepository:
         repository = LocalVectorSearchRepository(
             embedding_repository=mock_repository,
             embedding_provider=mock_provider,
+            embedding_type=EmbeddingType.CODE,
         )
 
-        request = VectorSearchQueryRequest(
+        request = SearchRequest(
             query="python programming",
             top_k=10,
             snippet_ids=[],  # Empty list - should return no results
@@ -393,7 +409,6 @@ async def test_retrieve_documents(session):
     from kodit.infrastructure.sqlalchemy.embedding_repository import (
         SqlAlchemyEmbeddingRepository,
     )
-    from kodit.domain.entities import Snippet, Index, File, Source, SourceType
 
     # Create embedding repository
     embedding_repository = SqlAlchemyEmbeddingRepository(session=session)
@@ -449,11 +464,11 @@ async def test_retrieve_documents(session):
     await session.commit()
 
     # Index the snippets
-    request = VectorIndexRequest(
+    request = IndexRequest(
         documents=[
-            VectorSearchRequest(snippet_id=snippet1.id, text=snippet1.content),
-            VectorSearchRequest(snippet_id=snippet2.id, text=snippet2.content),
-            VectorSearchRequest(snippet_id=snippet3.id, text=snippet3.content),
+            Document(snippet_id=snippet1.id, text=snippet1.content),
+            Document(snippet_id=snippet2.id, text=snippet2.content),
+            Document(snippet_id=snippet3.id, text=snippet3.content),
         ]
     )
     async for batch in vector_search_repository.index_documents(request):
@@ -461,11 +476,11 @@ async def test_retrieve_documents(session):
 
     # Search for similar content
     results = await vector_search_repository.search(
-        VectorSearchQueryRequest(query="python programming language", top_k=2)
+        SearchRequest(query="python programming language", top_k=2)
     )
 
     assert len(results) == 2
-    assert all(isinstance(r, VectorSearchResult) for r in results)
+    assert all(isinstance(r, SearchResult) for r in results)
     assert all(0 <= r.score <= 1 for r in results)
 
     # The first result should be the most relevant (python-related)

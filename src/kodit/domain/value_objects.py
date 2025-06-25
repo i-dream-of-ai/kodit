@@ -46,6 +46,14 @@ class Document:
 
 
 @dataclass
+class DocumentSearchResult:
+    """Generic document search result model."""
+
+    snippet_id: int
+    score: float
+
+
+@dataclass
 class SearchResult:
     """Generic search result model."""
 
@@ -61,12 +69,11 @@ class IndexRequest:
 
 
 @dataclass
-class SimpleSearchRequest:
+class SearchRequest:
     """Generic search request (single query string)."""
 
     query: str
     top_k: int = 10
-    search_type: SearchType = SearchType.BM25
     snippet_ids: list[int] | None = None
 
 
@@ -82,19 +89,6 @@ class IndexResult:
     """Generic indexing result."""
 
     snippet_id: int
-
-
-# Legacy aliases for backward compatibility
-BM25Document = Document
-BM25SearchResult = SearchResult
-BM25IndexRequest = IndexRequest
-BM25SearchRequest = SimpleSearchRequest
-BM25DeleteRequest = DeleteRequest
-
-VectorSearchRequest = Document
-VectorSearchResult = SearchResult
-VectorIndexRequest = IndexRequest
-VectorSearchQueryRequest = SimpleSearchRequest
 
 
 @dataclass(frozen=True)
@@ -272,14 +266,6 @@ class EnrichmentIndexRequest:
     """Domain model for enrichment index request."""
 
     requests: list[EnrichmentRequest]
-
-
-@dataclass
-class EnrichmentSearchRequest:
-    """Domain model for enrichment search request."""
-
-    query: str
-    top_k: int = 10
 
 
 @dataclass

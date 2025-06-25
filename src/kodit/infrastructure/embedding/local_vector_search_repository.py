@@ -3,7 +3,6 @@
 from collections.abc import AsyncGenerator
 
 import structlog
-import tiktoken
 
 from kodit.domain.entities import Embedding, EmbeddingType
 from kodit.domain.services.embedding_service import (
@@ -12,10 +11,10 @@ from kodit.domain.services.embedding_service import (
 )
 from kodit.domain.value_objects import (
     EmbeddingRequest,
+    IndexRequest,
     IndexResult,
-    VectorIndexRequest,
-    VectorSearchQueryRequest,
-    VectorSearchResult,
+    SearchRequest,
+    SearchResult,
 )
 from kodit.infrastructure.sqlalchemy.embedding_repository import (
     SqlAlchemyEmbeddingRepository,
@@ -27,35 +26,29 @@ class LocalVectorSearchRepository(VectorSearchRepository):
 
     def __init__(
         self,
-        embedding_repository: SqlAlchemyEmbeddingRepository,
         embedding_provider: EmbeddingProvider,
-        embedding_type: EmbeddingType = EmbeddingType.CODE,
+        embedding_repository: SqlAlchemyEmbeddingRepository,
+        embedding_type: EmbeddingType,
     ) -> None:
         """Initialize the local vector search repository.
 
         Args:
-            embedding_repository: The SQLAlchemy embedding repository
             embedding_provider: The embedding provider for generating embeddings
+            embedding_repository: The embedding repository for persistence
             embedding_type: The type of embedding to use
 
         """
-        self.log = structlog.get_logger(__name__)
-        self.embedding_repository = embedding_repository
         self.embedding_provider = embedding_provider
-        self.encoding = tiktoken.encoding_for_model("text-embedding-3-small")
+        self.embedding_repository = embedding_repository
         self.embedding_type = embedding_type
+        self.log = structlog.get_logger(__name__)
 
-    def index_documents(
-        self, request: VectorIndexRequest
+    async def index_documents(
+        self, request: IndexRequest
     ) -> AsyncGenerator[list[IndexResult], None]:
         """Index documents for vector search."""
-        if not request.documents:
-
-            async def empty_generator() -> AsyncGenerator[list[IndexResult], None]:
-                if False:
-                    yield []
-
-            return empty_generator()
+        if not request.documents or len(request.documents) == 0:
+            yield []
 
         # Convert to embedding requests
         requests = [
@@ -63,25 +56,20 @@ class LocalVectorSearchRepository(VectorSearchRepository):
             for doc in request.documents
         ]
 
-        async def _index_batches() -> AsyncGenerator[list[IndexResult], None]:
-            async for batch in self.embedding_provider.embed(requests):
-                results = []
-                for result in batch:
-                    await self.embedding_repository.create_embedding(
-                        Embedding(
-                            snippet_id=result.snippet_id,
-                            embedding=result.embedding,
-                            type=self.embedding_type,
-                        )
+        async for batch in self.embedding_provider.embed(requests):
+            results = []
+            for result in batch:
+                await self.embedding_repository.create_embedding(
+                    Embedding(
+                        snippet_id=result.snippet_id,
+                        embedding=result.embedding,
+                        type=self.embedding_type,
                     )
-                    results.append(IndexResult(snippet_id=result.snippet_id))
-                yield results
+                )
+                results.append(IndexResult(snippet_id=result.snippet_id))
+            yield results
 
-        return _index_batches()
-
-    async def search(
-        self, request: VectorSearchQueryRequest
-    ) -> list[VectorSearchResult]:
+    async def search(self, request: SearchRequest) -> list[SearchResult]:
         """Search documents using vector similarity."""
         # Build a single-item request and collect its embedding
         req = EmbeddingRequest(snippet_id=0, text=request.query)
@@ -98,7 +86,7 @@ class LocalVectorSearchRepository(VectorSearchRepository):
             self.embedding_type, embedding_vec, request.top_k, request.snippet_ids
         )
         return [
-            VectorSearchResult(snippet_id=snippet_id, score=score)
+            SearchResult(snippet_id=snippet_id, score=score)
             for snippet_id, score in results
         ]
 
