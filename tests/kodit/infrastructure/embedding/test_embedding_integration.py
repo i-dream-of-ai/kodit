@@ -1,26 +1,23 @@
 """Integration tests for embedding functionality."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from kodit.domain.value_objects import (
-    EmbeddingRequest,
-    EmbeddingResponse,
-    IndexResult,
-    IndexRequest,
-    SearchRequest,
-    SearchResult,
-    Document,
-)
 from kodit.domain.entities import (
     EmbeddingType,
-    Source,
-    SourceType,
     File,
     Index,
     Snippet,
+    Source,
+    SourceType,
 )
 from kodit.domain.services.embedding_service import EmbeddingDomainService
+from kodit.domain.value_objects import (
+    Document,
+    IndexRequest,
+    SearchRequest,
+    SearchResult,
+)
 from kodit.infrastructure.embedding.embedding_providers.hash_embedding_provider import (
     HashEmbeddingProvider,
 )
@@ -36,7 +33,7 @@ class TestEmbeddingIntegration:
     """Integration tests for embedding functionality."""
 
     @pytest.mark.asyncio
-    async def test_full_embedding_pipeline_local(self, session):
+    async def test_full_embedding_pipeline_local(self, session: AsyncSession) -> None:
         """Test the full embedding pipeline with hash provider."""
         # Create real components
         embedding_repository = SqlAlchemyEmbeddingRepository(session=session)
@@ -54,11 +51,13 @@ class TestEmbeddingIntegration:
         )
 
         # Create actual snippets in the database first
-        from datetime import datetime, UTC
+        from datetime import UTC, datetime
 
         # Create source
         source = Source(
-            uri="test_repo", cloned_path="/tmp/test_repo", source_type=SourceType.GIT
+            uri="test_repo",
+            cloned_path="/tmp/test_repo",  # noqa: S108
+            source_type=SourceType.GIT,
         )
         session.add(source)
         await session.commit()
@@ -70,7 +69,7 @@ class TestEmbeddingIntegration:
             source_id=source.id,
             mime_type="text/plain",
             uri="test.py",
-            cloned_path="/tmp/test_repo/test.py",
+            cloned_path="/tmp/test_repo/test.py",  # noqa: S108
             sha256="abc123",
             size_bytes=100,
             extension="py",
@@ -136,7 +135,7 @@ class TestEmbeddingIntegration:
         assert has_embedding is False
 
     @pytest.mark.asyncio
-    async def test_embedding_similarity_ranking(self, session):
+    async def test_embedding_similarity_ranking(self, session: AsyncSession) -> None:
         """Test that embeddings produce meaningful similarity rankings."""
         embedding_repository = SqlAlchemyEmbeddingRepository(session=session)
         embedding_provider = HashEmbeddingProvider()
@@ -152,11 +151,13 @@ class TestEmbeddingIntegration:
         )
 
         # Create actual snippets in the database first
-        from datetime import datetime, UTC
+        from datetime import UTC, datetime
 
         # Create source
         source = Source(
-            uri="test_repo", cloned_path="/tmp/test_repo", source_type=SourceType.GIT
+            uri="test_repo",
+            cloned_path="/tmp/test_repo",  # noqa: S108
+            source_type=SourceType.GIT,
         )
         session.add(source)
         await session.commit()
@@ -168,7 +169,7 @@ class TestEmbeddingIntegration:
             source_id=source.id,
             mime_type="text/plain",
             uri="test.py",
-            cloned_path="/tmp/test_repo/test.py",
+            cloned_path="/tmp/test_repo/test.py",  # noqa: S108
             sha256="abc123",
             size_bytes=100,
             extension="py",
@@ -210,7 +211,7 @@ class TestEmbeddingIntegration:
             ]
         )
 
-        async for batch in domain_service.index_documents(index_request):
+        async for _ in domain_service.index_documents(index_request):
             pass
 
         # Search for python-related content
@@ -229,7 +230,7 @@ class TestEmbeddingIntegration:
         assert len(python_snippet_ids) > 0
 
     @pytest.mark.asyncio
-    async def test_embedding_batch_processing(self, session):
+    async def test_embedding_batch_processing(self, session: AsyncSession) -> None:
         """Test that embedding processing works correctly in batches."""
         embedding_repository = SqlAlchemyEmbeddingRepository(session=session)
         embedding_provider = HashEmbeddingProvider()
@@ -245,11 +246,13 @@ class TestEmbeddingIntegration:
         )
 
         # Create actual snippets in the database first
-        from datetime import datetime, UTC
+        from datetime import UTC, datetime
 
         # Create source
         source = Source(
-            uri="test_repo", cloned_path="/tmp/test_repo", source_type=SourceType.GIT
+            uri="test_repo",
+            cloned_path="/tmp/test_repo",  # noqa: S108
+            source_type=SourceType.GIT,
         )
         session.add(source)
         await session.commit()
@@ -261,7 +264,7 @@ class TestEmbeddingIntegration:
             source_id=source.id,
             mime_type="text/plain",
             uri="test.py",
-            cloned_path="/tmp/test_repo/test.py",
+            cloned_path="/tmp/test_repo/test.py",  # noqa: S108
             sha256="abc123",
             size_bytes=100,
             extension="py",
@@ -303,7 +306,7 @@ class TestEmbeddingIntegration:
         assert batch_count >= 2  # Should be processed in multiple batches
 
     @pytest.mark.asyncio
-    async def test_embedding_error_handling(self, session):
+    async def test_embedding_error_handling(self, session: AsyncSession) -> None:
         """Test error handling in the embedding pipeline."""
         # Test with invalid requests
         embedding_repository = SqlAlchemyEmbeddingRepository(session=session)
@@ -332,7 +335,9 @@ class TestEmbeddingIntegration:
             await domain_service.has_embedding(-1, EmbeddingType.CODE)
 
     @pytest.mark.asyncio
-    async def test_embedding_deterministic_behavior(self, session):
+    async def test_embedding_deterministic_behavior(
+        self, session: AsyncSession
+    ) -> None:
         """Test that embeddings are deterministic."""
         embedding_repository = SqlAlchemyEmbeddingRepository(session=session)
         embedding_provider = HashEmbeddingProvider()
@@ -348,11 +353,13 @@ class TestEmbeddingIntegration:
         )
 
         # Create actual snippets in the database first
-        from datetime import datetime, UTC
+        from datetime import UTC, datetime
 
         # Create source
         source = Source(
-            uri="test_repo", cloned_path="/tmp/test_repo", source_type=SourceType.GIT
+            uri="test_repo",
+            cloned_path="/tmp/test_repo",  # noqa: S108
+            source_type=SourceType.GIT,
         )
         session.add(source)
         await session.commit()
@@ -364,7 +371,7 @@ class TestEmbeddingIntegration:
             source_id=source.id,
             mime_type="text/plain",
             uri="test.py",
-            cloned_path="/tmp/test_repo/test.py",
+            cloned_path="/tmp/test_repo/test.py",  # noqa: S108
             sha256="abc123",
             size_bytes=100,
             extension="py",
@@ -392,7 +399,7 @@ class TestEmbeddingIntegration:
         )
 
         # First indexing
-        async for batch in domain_service.index_documents(index_request):
+        async for _ in domain_service.index_documents(index_request):
             pass
 
         # Search first time
@@ -400,7 +407,7 @@ class TestEmbeddingIntegration:
         results1 = await domain_service.search(search_request)
 
         # Second indexing (should be idempotent)
-        async for batch in domain_service.index_documents(index_request):
+        async for _ in domain_service.index_documents(index_request):
             pass
 
         # Search second time
@@ -413,7 +420,7 @@ class TestEmbeddingIntegration:
             assert abs(results1[0].score - results2[0].score) < 1e-6
 
     @pytest.mark.asyncio
-    async def test_embedding_type_separation(self, session):
+    async def test_embedding_type_separation(self, session: AsyncSession) -> None:
         """Test that different embedding types are handled separately."""
         embedding_repository = SqlAlchemyEmbeddingRepository(session=session)
         embedding_provider = HashEmbeddingProvider()
@@ -442,11 +449,13 @@ class TestEmbeddingIntegration:
         )
 
         # Create actual snippets in the database first
-        from datetime import datetime, UTC
+        from datetime import UTC, datetime
 
         # Create source
         source = Source(
-            uri="test_repo", cloned_path="/tmp/test_repo", source_type=SourceType.GIT
+            uri="test_repo",
+            cloned_path="/tmp/test_repo",  # noqa: S108
+            source_type=SourceType.GIT,
         )
         session.add(source)
         await session.commit()
@@ -458,7 +467,7 @@ class TestEmbeddingIntegration:
             source_id=source.id,
             mime_type="text/plain",
             uri="test.py",
-            cloned_path="/tmp/test_repo/test.py",
+            cloned_path="/tmp/test_repo/test.py",  # noqa: S108
             sha256="abc123",
             size_bytes=100,
             extension="py",
@@ -486,11 +495,11 @@ class TestEmbeddingIntegration:
         )
 
         # Index in code repository
-        async for batch in code_service.index_documents(index_request):
+        async for _ in code_service.index_documents(index_request):
             pass
 
         # Index in text repository
-        async for batch in text_service.index_documents(index_request):
+        async for _ in text_service.index_documents(index_request):
             pass
 
         # Check that embeddings exist for both types
@@ -509,7 +518,9 @@ class TestEmbeddingIntegration:
         assert text_results[0].snippet_id == snippet.id
 
     @pytest.mark.asyncio
-    async def test_embedding_performance_characteristics(self, session):
+    async def test_embedding_performance_characteristics(
+        self, session: AsyncSession
+    ) -> None:
         """Test basic performance characteristics of embedding operations."""
         embedding_repository = SqlAlchemyEmbeddingRepository(session=session)
         embedding_provider = HashEmbeddingProvider()
@@ -525,11 +536,13 @@ class TestEmbeddingIntegration:
         )
 
         # Create actual snippets in the database first
-        from datetime import datetime, UTC
+        from datetime import UTC, datetime
 
         # Create source
         source = Source(
-            uri="test_repo", cloned_path="/tmp/test_repo", source_type=SourceType.GIT
+            uri="test_repo",
+            cloned_path="/tmp/test_repo",  # noqa: S108
+            source_type=SourceType.GIT,
         )
         session.add(source)
         await session.commit()
@@ -541,7 +554,7 @@ class TestEmbeddingIntegration:
             source_id=source.id,
             mime_type="text/plain",
             uri="test.py",
-            cloned_path="/tmp/test_repo/test.py",
+            cloned_path="/tmp/test_repo/test.py",  # noqa: S108
             sha256="abc123",
             size_bytes=100,
             extension="py",
@@ -578,7 +591,7 @@ class TestEmbeddingIntegration:
         index_request = IndexRequest(documents=documents)
 
         start_time = time.time()
-        async for batch in domain_service.index_documents(index_request):
+        async for _ in domain_service.index_documents(index_request):
             pass
         indexing_time = time.time() - start_time
 

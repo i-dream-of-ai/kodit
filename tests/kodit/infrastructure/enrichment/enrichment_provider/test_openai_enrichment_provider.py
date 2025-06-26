@@ -1,10 +1,11 @@
 """Tests for the OpenAI enrichment provider."""
 
 import asyncio
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-from kodit.domain.value_objects import EnrichmentRequest, EnrichmentResponse
+import pytest
+
+from kodit.domain.value_objects import EnrichmentRequest
 from kodit.infrastructure.enrichment.openai_enrichment_provider import (
     OpenAIEnrichmentProvider,
 )
@@ -13,14 +14,14 @@ from kodit.infrastructure.enrichment.openai_enrichment_provider import (
 class TestOpenAIEnrichmentProvider:
     """Test the OpenAI enrichment provider."""
 
-    def test_init_default_values(self):
+    def test_init_default_values(self) -> None:
         """Test initialization with default values."""
         mock_client = MagicMock()
         provider = OpenAIEnrichmentProvider(openai_client=mock_client)
         assert provider.openai_client == mock_client
         assert provider.model_name == "gpt-4o-mini"
 
-    def test_init_custom_values(self):
+    def test_init_custom_values(self) -> None:
         """Test initialization with custom values."""
         mock_client = MagicMock()
         provider = OpenAIEnrichmentProvider(
@@ -30,21 +31,19 @@ class TestOpenAIEnrichmentProvider:
         assert provider.model_name == "gpt-4"
 
     @pytest.mark.asyncio
-    async def test_enrich_empty_requests(self):
+    async def test_enrich_empty_requests(self) -> None:
         """Test enrichment with empty requests."""
         mock_client = MagicMock()
         provider = OpenAIEnrichmentProvider(openai_client=mock_client)
         requests = []
 
-        results = []
-        async for result in provider.enrich(requests):
-            results.append(result)
+        results = [result async for result in provider.enrich(requests)]
 
         assert len(results) == 0
         mock_client.chat.completions.create.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_enrich_empty_text_requests(self):
+    async def test_enrich_empty_text_requests(self) -> None:
         """Test enrichment with requests containing empty text."""
         mock_client = MagicMock()
         # Mock the chat.completions.create method as AsyncMock with a proper response
@@ -59,9 +58,7 @@ class TestOpenAIEnrichmentProvider:
             EnrichmentRequest(snippet_id=2, text="   "),
         ]
 
-        results = []
-        async for result in provider.enrich(requests):
-            results.append(result)
+        results = [result async for result in provider.enrich(requests)]
 
         # Should return responses for all requests
         assert len(results) == 2
@@ -79,7 +76,7 @@ class TestOpenAIEnrichmentProvider:
         mock_client.chat.completions.create.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_enrich_single_request_success(self):
+    async def test_enrich_single_request_success(self) -> None:
         """Test successful enrichment with a single request."""
         mock_client = MagicMock()
         mock_response = MagicMock()
@@ -92,28 +89,30 @@ class TestOpenAIEnrichmentProvider:
         provider = OpenAIEnrichmentProvider(openai_client=mock_client)
         requests = [EnrichmentRequest(snippet_id=1, text="def test(): pass")]
 
-        results = []
-        async for result in provider.enrich(requests):
-            results.append(result)
+        results = [result async for result in provider.enrich(requests)]
 
         assert len(results) == 1
         assert results[0].snippet_id == 1
         assert results[0].text == "This is a test function"
 
-        # Verify the API was called correctly - note the extra newlines in the actual prompt
+        # Verify the API was called correctly - note the extra newlines in the prompt
         mock_client.chat.completions.create.assert_called_once_with(
             model="gpt-4o-mini",
             messages=[
                 {
                     "role": "system",
-                    "content": "\nYou are a professional software developer. You will be given a snippet of code.\nPlease provide a concise explanation of the code.\n",
+                    "content": (
+                        "\nYou are a professional software developer. "
+                        "You will be given a snippet of code.\nPlease provide "
+                        "a concise explanation of the code.\n"
+                    ),
                 },
                 {"role": "user", "content": "def test(): pass"},
             ],
         )
 
     @pytest.mark.asyncio
-    async def test_enrich_multiple_requests_success(self):
+    async def test_enrich_multiple_requests_success(self) -> None:
         """Test successful enrichment with multiple requests."""
         mock_client = MagicMock()
 
@@ -137,9 +136,7 @@ class TestOpenAIEnrichmentProvider:
             EnrichmentRequest(snippet_id=2, text="def world(): pass"),
         ]
 
-        results = []
-        async for result in provider.enrich(requests):
-            results.append(result)
+        results = [result async for result in provider.enrich(requests)]
 
         assert len(results) == 2
         # Results come back in completion order, so we need to check by snippet_id
@@ -160,7 +157,7 @@ class TestOpenAIEnrichmentProvider:
         assert mock_client.chat.completions.create.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_enrich_mixed_requests(self):
+    async def test_enrich_mixed_requests(self) -> None:
         """Test enrichment with mixed valid and empty requests."""
         mock_client = MagicMock()
         mock_response = MagicMock()
@@ -175,9 +172,7 @@ class TestOpenAIEnrichmentProvider:
             EnrichmentRequest(snippet_id=3, text="   "),  # Whitespace only
         ]
 
-        results = []
-        async for result in provider.enrich(requests):
-            results.append(result)
+        results = [result async for result in provider.enrich(requests)]
 
         # Should return responses for all requests
         assert len(results) == 3
@@ -204,7 +199,7 @@ class TestOpenAIEnrichmentProvider:
         assert mock_client.chat.completions.create.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_enrich_api_error_handling(self):
+    async def test_enrich_api_error_handling(self) -> None:
         """Test handling of API errors."""
         mock_client = MagicMock()
         mock_client.chat.completions.create = AsyncMock(
@@ -214,9 +209,7 @@ class TestOpenAIEnrichmentProvider:
         provider = OpenAIEnrichmentProvider(openai_client=mock_client)
         requests = [EnrichmentRequest(snippet_id=1, text="def test(): pass")]
 
-        results = []
-        async for result in provider.enrich(requests):
-            results.append(result)
+        results = [result async for result in provider.enrich(requests)]
 
         # Should return empty response on error
         assert len(results) == 1
@@ -224,7 +217,7 @@ class TestOpenAIEnrichmentProvider:
         assert results[0].text == ""
 
     @pytest.mark.asyncio
-    async def test_enrich_null_content_handling(self):
+    async def test_enrich_null_content_handling(self) -> None:
         """Test handling of null content in API response."""
         mock_client = MagicMock()
         mock_response = MagicMock()
@@ -235,9 +228,7 @@ class TestOpenAIEnrichmentProvider:
         provider = OpenAIEnrichmentProvider(openai_client=mock_client)
         requests = [EnrichmentRequest(snippet_id=1, text="def test(): pass")]
 
-        results = []
-        async for result in provider.enrich(requests):
-            results.append(result)
+        results = [result async for result in provider.enrich(requests)]
 
         # Should return empty string for null content
         assert len(results) == 1
@@ -245,14 +236,14 @@ class TestOpenAIEnrichmentProvider:
         assert results[0].text == ""
 
     @pytest.mark.asyncio
-    async def test_enrich_concurrent_requests(self):
+    async def test_enrich_concurrent_requests(self) -> None:
         """Test that requests are processed concurrently."""
         mock_client = MagicMock()
 
         # Track call order to verify concurrency
         call_order = []
 
-        async def mock_create(*args, **kwargs):
+        async def mock_create(*args, **kwargs) -> MagicMock:  # noqa: ANN002, ANN003, ARG001
             # Simulate some processing time
             await asyncio.sleep(0.1)
             call_order.append(kwargs.get("messages", [{}])[1].get("content", ""))
@@ -276,9 +267,7 @@ class TestOpenAIEnrichmentProvider:
         ]
 
         start_time = asyncio.get_event_loop().time()
-        results = []
-        async for result in provider.enrich(requests):
-            results.append(result)
+        results = [result async for result in provider.enrich(requests)]
         end_time = asyncio.get_event_loop().time()
 
         # Should process all requests
@@ -289,14 +278,14 @@ class TestOpenAIEnrichmentProvider:
         assert end_time - start_time < 0.4
 
     @pytest.mark.asyncio
-    async def test_enrich_semaphore_limit(self):
+    async def test_enrich_semaphore_limit(self) -> None:
         """Test that the semaphore limits concurrent requests."""
         mock_client = MagicMock()
 
         active_requests = 0
         max_concurrent = 0
 
-        async def mock_create(*args, **kwargs):
+        async def mock_create(*args, **kwargs) -> MagicMock:  # noqa: ANN002, ANN003, ARG001
             nonlocal active_requests, max_concurrent
             active_requests += 1
             max_concurrent = max(max_concurrent, active_requests)
@@ -319,9 +308,7 @@ class TestOpenAIEnrichmentProvider:
             for i in range(10)  # More than the semaphore limit
         ]
 
-        results = []
-        async for result in provider.enrich(requests):
-            results.append(result)
+        results = [result async for result in provider.enrich(requests)]
 
         # Should process all requests
         assert len(results) == 10
@@ -330,7 +317,7 @@ class TestOpenAIEnrichmentProvider:
         assert max_concurrent <= 10
 
     @pytest.mark.asyncio
-    async def test_enrich_custom_model(self):
+    async def test_enrich_custom_model(self) -> None:
         """Test enrichment with a custom model."""
         mock_client = MagicMock()
         mock_response = MagicMock()
@@ -343,9 +330,7 @@ class TestOpenAIEnrichmentProvider:
         )
         requests = [EnrichmentRequest(snippet_id=1, text="def test(): pass")]
 
-        results = []
-        async for result in provider.enrich(requests):
-            results.append(result)
+        [result async for result in provider.enrich(requests)]
 
         # Verify the custom model was used
         mock_client.chat.completions.create.assert_called_once_with(
@@ -353,7 +338,11 @@ class TestOpenAIEnrichmentProvider:
             messages=[
                 {
                     "role": "system",
-                    "content": "\nYou are a professional software developer. You will be given a snippet of code.\nPlease provide a concise explanation of the code.\n",
+                    "content": (
+                        "\nYou are a professional software developer. "
+                        "You will be given a snippet of code.\nPlease provide "
+                        "a concise explanation of the code.\n"
+                    ),
                 },
                 {"role": "user", "content": "def test(): pass"},
             ],

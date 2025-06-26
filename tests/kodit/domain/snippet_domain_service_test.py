@@ -1,10 +1,10 @@
 """Tests for the snippet domain service."""
 
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from kodit.domain.entities import Snippet, File
+
+from kodit.domain.entities import File, Snippet
 from kodit.domain.enums import SnippetExtractionStrategy
 from kodit.domain.repositories import FileRepository, SnippetRepository
 from kodit.domain.services.snippet_extraction_service import (
@@ -12,8 +12,8 @@ from kodit.domain.services.snippet_extraction_service import (
 )
 from kodit.domain.services.snippet_service import SnippetDomainService
 from kodit.domain.value_objects import (
-    SnippetExtractionResult,
     MultiSearchRequest,
+    SnippetExtractionResult,
     SnippetListItem,
 )
 
@@ -94,7 +94,8 @@ async def test_extract_and_create_snippets_success(
     # Mock saved snippets
     saved_snippets = []
 
-    async def mock_save(snippet):
+    async def mock_save(snippet: Snippet) -> Snippet:
+        """Mock the save method."""
         saved = MagicMock(spec=Snippet)
         saved.id = len(saved_snippets) + 1
         saved.file_id = snippet.file_id

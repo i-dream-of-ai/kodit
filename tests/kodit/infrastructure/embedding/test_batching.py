@@ -1,3 +1,5 @@
+"""Batching tests."""
+
 import math
 
 import tiktoken
@@ -10,14 +12,13 @@ from kodit.infrastructure.embedding.embedding_providers.batching import (
 
 def test_split_sub_batches_handles_endoftext_token() -> None:
     """Ensure the special ``<|endoftext|>`` token is batched without errors."""
-
     # Use the same encoding as the OpenAI embedding models
     encoding = tiktoken.encoding_for_model("text-embedding-3-small")
 
     # Single request that is just the special token
     data = [EmbeddingRequest(snippet_id=1, text="<|endoftext|>")]
 
-    # Perform batching – any reasonable token limit should keep this in one batch
+    # Perform batching - any reasonable token limit should keep this in one batch
     batches = split_sub_batches(encoding, data, max_tokens=10)
 
     assert len(batches) == 1, "Expected a single batch for one short request"
@@ -29,7 +30,6 @@ def test_split_sub_batches_handles_endoftext_token() -> None:
 
 def test_split_sub_batches_respects_token_limit() -> None:
     """Verify that batches never exceed the *max_tokens* constraint."""
-
     encoding = tiktoken.encoding_for_model("text-embedding-3-small")
 
     sample_text = "hello world"
@@ -60,7 +60,6 @@ def test_split_sub_batches_respects_token_limit() -> None:
 
 def test_split_sub_batches_truncates_long_items() -> None:
     """Items exceeding *max_tokens* should be truncated to the limit."""
-
     encoding = tiktoken.encoding_for_model("text-embedding-3-small")
 
     max_tokens = 50  # small for test purposes

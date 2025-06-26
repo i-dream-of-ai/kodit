@@ -1,8 +1,12 @@
+"""Test the indexing repository."""
+
 from datetime import UTC, datetime
-from kodit.domain.entities import Snippet, File, Source, SourceType
-from kodit.infrastructure.indexing.index_repository import SQLAlchemyIndexRepository
-from sqlalchemy.ext.asyncio import AsyncSession
+
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from kodit.domain.entities import File, Source, SourceType
+from kodit.infrastructure.indexing.index_repository import SQLAlchemyIndexRepository
 
 
 @pytest.fixture
@@ -16,6 +20,7 @@ async def test_should_allow_multiple_snippets_for_one_file(
     session: AsyncSession,
     indexing_repository: SQLAlchemyIndexRepository,
 ) -> None:
+    """Test all snippets for a file are added to the index."""
     source = Source(
         uri="test_folder", cloned_path="test_folder", source_type=SourceType.FOLDER
     )

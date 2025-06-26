@@ -1,9 +1,11 @@
 """Tests for local vector search repository."""
 
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from kodit.domain.entities import (
     EmbeddingType,
@@ -16,9 +18,13 @@ from kodit.domain.entities import (
 from kodit.domain.value_objects import (
     Document,
     EmbeddingResponse,
+    EnrichmentRequest,
     IndexRequest,
-    SearchResult,
     SearchRequest,
+    SearchResult,
+)
+from kodit.infrastructure.embedding.embedding_providers.local_embedding_provider import (  # noqa: E501
+    LocalEmbeddingProvider,
 )
 from kodit.infrastructure.embedding.local_vector_search_repository import (
     LocalVectorSearchRepository,
@@ -31,7 +37,7 @@ from kodit.infrastructure.sqlalchemy.embedding_repository import (
 class TestLocalVectorSearchRepository:
     """Test the local vector search repository."""
 
-    def test_init_default_values(self):
+    def test_init_default_values(self) -> None:
         """Test initialization with default values."""
         mock_repository = MagicMock(spec=SqlAlchemyEmbeddingRepository)
         mock_provider = MagicMock()
@@ -47,7 +53,7 @@ class TestLocalVectorSearchRepository:
         assert repository.embedding_type == EmbeddingType.CODE
         assert repository.log is not None
 
-    def test_init_custom_values(self):
+    def test_init_custom_values(self) -> None:
         """Test initialization with custom values."""
         mock_repository = MagicMock(spec=SqlAlchemyEmbeddingRepository)
         mock_provider = MagicMock()
@@ -61,7 +67,7 @@ class TestLocalVectorSearchRepository:
         assert repository.embedding_type == EmbeddingType.TEXT
 
     @pytest.mark.asyncio
-    async def test_index_documents_empty_request(self):
+    async def test_index_documents_empty_request(self) -> None:
         """Test indexing with empty request."""
         mock_repository = MagicMock(spec=SqlAlchemyEmbeddingRepository)
         mock_provider = MagicMock()
@@ -81,14 +87,16 @@ class TestLocalVectorSearchRepository:
         assert len(results) == 0
 
     @pytest.mark.asyncio
-    async def test_index_documents_single_document(self):
+    async def test_index_documents_single_document(self) -> None:
         """Test indexing with a single document."""
         mock_repository = MagicMock(spec=SqlAlchemyEmbeddingRepository)
         mock_repository.create_embedding = AsyncMock()
 
         mock_provider = MagicMock()
 
-        async def mock_embed(requests):
+        async def mock_embed(
+            _: list[EnrichmentRequest],
+        ) -> AsyncGenerator[list[EmbeddingResponse], None]:
             yield [EmbeddingResponse(snippet_id=1, embedding=[0.1, 0.2, 0.3])]
 
         mock_provider.embed.return_value = mock_embed([])
@@ -121,14 +129,16 @@ class TestLocalVectorSearchRepository:
         mock_repository.create_embedding.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_index_documents_multiple_documents(self):
+    async def test_index_documents_multiple_documents(self) -> None:
         """Test indexing with multiple documents."""
         mock_repository = MagicMock(spec=SqlAlchemyEmbeddingRepository)
         mock_repository.create_embedding = AsyncMock()
 
         mock_provider = MagicMock()
 
-        async def mock_embed(requests):
+        async def mock_embed(
+            _: list[EnrichmentRequest],
+        ) -> AsyncGenerator[list[EmbeddingResponse], None]:
             yield [
                 EmbeddingResponse(snippet_id=1, embedding=[0.1, 0.2, 0.3]),
                 EmbeddingResponse(snippet_id=2, embedding=[0.4, 0.5, 0.6]),
@@ -161,7 +171,7 @@ class TestLocalVectorSearchRepository:
         assert mock_repository.create_embedding.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_search_success(self):
+    async def test_search_success(self) -> None:
         """Test successful search."""
         mock_repository = MagicMock(spec=SqlAlchemyEmbeddingRepository)
         mock_repository.list_semantic_results = AsyncMock(
@@ -173,7 +183,9 @@ class TestLocalVectorSearchRepository:
 
         mock_provider = MagicMock()
 
-        async def mock_embed(requests):
+        async def mock_embed(
+            _: list[EnrichmentRequest],
+        ) -> AsyncGenerator[list[EmbeddingResponse], None]:
             yield [EmbeddingResponse(snippet_id=0, embedding=[0.1, 0.2, 0.3])]
 
         mock_provider.embed.return_value = mock_embed([])
@@ -207,13 +219,15 @@ class TestLocalVectorSearchRepository:
         )
 
     @pytest.mark.asyncio
-    async def test_search_no_embedding_generated(self):
+    async def test_search_no_embedding_generated(self) -> None:
         """Test search when no embedding is generated."""
         mock_repository = MagicMock(spec=SqlAlchemyEmbeddingRepository)
 
         mock_provider = MagicMock()
 
-        async def mock_embed(requests):
+        async def mock_embed(
+            _: list[EnrichmentRequest],
+        ) -> AsyncGenerator[list[EmbeddingResponse], None]:
             yield []  # No embeddings returned
 
         mock_provider.embed.return_value = mock_embed([])
@@ -232,7 +246,7 @@ class TestLocalVectorSearchRepository:
         mock_repository.list_semantic_results.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_has_embedding_true(self):
+    async def test_has_embedding_true(self) -> None:
         """Test has_embedding when embedding exists."""
         mock_repository = MagicMock(spec=SqlAlchemyEmbeddingRepository)
         mock_repository.get_embedding_by_snippet_id_and_type = AsyncMock(
@@ -255,7 +269,7 @@ class TestLocalVectorSearchRepository:
         )
 
     @pytest.mark.asyncio
-    async def test_has_embedding_false(self):
+    async def test_has_embedding_false(self) -> None:
         """Test has_embedding when embedding doesn't exist."""
         mock_repository = MagicMock(spec=SqlAlchemyEmbeddingRepository)
         mock_repository.get_embedding_by_snippet_id_and_type = AsyncMock(
@@ -278,7 +292,7 @@ class TestLocalVectorSearchRepository:
         )
 
     @pytest.mark.asyncio
-    async def test_search_with_snippet_ids_filtering(self):
+    async def test_search_with_snippet_ids_filtering(self) -> None:
         """Test search with snippet_ids filtering."""
         mock_repository = MagicMock(spec=SqlAlchemyEmbeddingRepository)
         mock_repository.list_semantic_results = AsyncMock(
@@ -289,7 +303,9 @@ class TestLocalVectorSearchRepository:
 
         mock_provider = MagicMock()
 
-        async def mock_embed(requests):
+        async def mock_embed(
+            _: list[EnrichmentRequest],
+        ) -> AsyncGenerator[list[EmbeddingResponse], None]:
             yield [EmbeddingResponse(snippet_id=0, embedding=[0.1, 0.2, 0.3])]
 
         mock_provider.embed.return_value = mock_embed([])
@@ -316,7 +332,7 @@ class TestLocalVectorSearchRepository:
         )
 
     @pytest.mark.asyncio
-    async def test_search_with_none_snippet_ids_no_filtering(self):
+    async def test_search_with_none_snippet_ids_no_filtering(self) -> None:
         """Test search with None snippet_ids (no filtering)."""
         mock_repository = MagicMock(spec=SqlAlchemyEmbeddingRepository)
         mock_repository.list_semantic_results = AsyncMock(
@@ -328,7 +344,9 @@ class TestLocalVectorSearchRepository:
 
         mock_provider = MagicMock()
 
-        async def mock_embed(requests):
+        async def mock_embed(
+            _: list[EnrichmentRequest],
+        ) -> AsyncGenerator[list[EmbeddingResponse], None]:
             yield [EmbeddingResponse(snippet_id=0, embedding=[0.1, 0.2, 0.3])]
 
         mock_provider.embed.return_value = mock_embed([])
@@ -359,7 +377,7 @@ class TestLocalVectorSearchRepository:
         )
 
     @pytest.mark.asyncio
-    async def test_search_with_empty_snippet_ids_returns_no_results(self):
+    async def test_search_with_empty_snippet_ids_returns_no_results(self) -> None:
         """Test search with empty snippet_ids list returns no results."""
         mock_repository = MagicMock(spec=SqlAlchemyEmbeddingRepository)
         mock_repository.list_semantic_results = AsyncMock(
@@ -368,7 +386,9 @@ class TestLocalVectorSearchRepository:
 
         mock_provider = MagicMock()
 
-        async def mock_embed(requests):
+        async def mock_embed(
+            _: list[EnrichmentRequest],
+        ) -> AsyncGenerator[list[EmbeddingResponse], None]:
             yield [EmbeddingResponse(snippet_id=0, embedding=[0.1, 0.2, 0.3])]
 
         mock_provider.embed.return_value = mock_embed([])
@@ -396,20 +416,12 @@ class TestLocalVectorSearchRepository:
 
 
 @pytest.mark.asyncio
-async def test_retrieve_documents(session):
+async def test_retrieve_documents(session: AsyncSession) -> None:
     """Test retrieving documents with actual embedding values.
 
     This test is based on the user's example and tests the actual embedding
     functionality with real data.
     """
-    # Create a real embedding provider and repository for this test
-    from kodit.infrastructure.embedding.embedding_providers.local_embedding_provider import (
-        LocalEmbeddingProvider,
-    )
-    from kodit.infrastructure.sqlalchemy.embedding_repository import (
-        SqlAlchemyEmbeddingRepository,
-    )
-
     # Create embedding repository
     embedding_repository = SqlAlchemyEmbeddingRepository(session=session)
 
@@ -425,7 +437,9 @@ async def test_retrieve_documents(session):
 
     # Create dummy source, file, and index
     source = Source(
-        uri="test_repo", cloned_path="/tmp/test_repo", source_type=SourceType.GIT
+        uri="test_repo",
+        cloned_path="/tmp/test_repo",  # noqa: S108
+        source_type=SourceType.GIT,
     )
     session.add(source)
     await session.commit()
@@ -436,7 +450,7 @@ async def test_retrieve_documents(session):
         source_id=source.id,
         mime_type="text/plain",
         uri="test.py",
-        cloned_path="/tmp/test_repo/test.py",
+        cloned_path="/tmp/test_repo/test.py",  # noqa: S108
         sha256="abc123",
         size_bytes=100,
         extension="py",
@@ -471,7 +485,7 @@ async def test_retrieve_documents(session):
             Document(snippet_id=snippet3.id, text=snippet3.content),
         ]
     )
-    async for batch in vector_search_repository.index_documents(request):
+    async for _batch in vector_search_repository.index_documents(request):
         pass  # Process all batches
 
     # Search for similar content

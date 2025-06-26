@@ -1,9 +1,10 @@
 """Tests for the local enrichment provider."""
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
-from kodit.domain.value_objects import EnrichmentRequest, EnrichmentResponse
+import pytest
+
+from kodit.domain.value_objects import EnrichmentRequest
 from kodit.infrastructure.enrichment.local_enrichment_provider import (
     LocalEnrichmentProvider,
 )
@@ -12,7 +13,7 @@ from kodit.infrastructure.enrichment.local_enrichment_provider import (
 class TestLocalEnrichmentProvider:
     """Test the local enrichment provider."""
 
-    def test_init_default_values(self):
+    def test_init_default_values(self) -> None:
         """Test initialization with default values."""
         provider = LocalEnrichmentProvider()
         assert provider.model_name == "Qwen/Qwen3-0.6B"
@@ -20,26 +21,24 @@ class TestLocalEnrichmentProvider:
         assert provider.model is None
         assert provider.tokenizer is None
 
-    def test_init_custom_values(self):
+    def test_init_custom_values(self) -> None:
         """Test initialization with custom values."""
         provider = LocalEnrichmentProvider(model_name="test-model", context_window=1024)
         assert provider.model_name == "test-model"
         assert provider.context_window == 1024
 
     @pytest.mark.asyncio
-    async def test_enrich_empty_requests(self):
+    async def test_enrich_empty_requests(self) -> None:
         """Test enrichment with empty requests."""
         provider = LocalEnrichmentProvider()
         requests = []
 
-        results = []
-        async for result in provider.enrich(requests):
-            results.append(result)
+        results = [result async for result in provider.enrich(requests)]
 
         assert len(results) == 0
 
     @pytest.mark.asyncio
-    async def test_enrich_empty_text_requests(self):
+    async def test_enrich_empty_text_requests(self) -> None:
         """Test enrichment with requests containing empty text."""
         provider = LocalEnrichmentProvider()
         requests = [
@@ -47,9 +46,7 @@ class TestLocalEnrichmentProvider:
             EnrichmentRequest(snippet_id=2, text="   "),
         ]
 
-        results = []
-        async for result in provider.enrich(requests):
-            results.append(result)
+        results = [result async for result in provider.enrich(requests)]
 
         # The local provider actually processes whitespace-only text
         # So we expect 1 result for the whitespace-only request
@@ -59,7 +56,9 @@ class TestLocalEnrichmentProvider:
     @pytest.mark.asyncio
     @patch("transformers.models.auto.tokenization_auto.AutoTokenizer")
     @patch("transformers.models.auto.modeling_auto.AutoModelForCausalLM")
-    async def test_enrich_single_request(self, mock_model_class, mock_tokenizer_class):
+    async def test_enrich_single_request(
+        self, mock_model_class: MagicMock, mock_tokenizer_class: MagicMock
+    ) -> None:
         """Test enrichment with a single request."""
         # Mock the tokenizer
         mock_tokenizer = MagicMock()
@@ -82,9 +81,7 @@ class TestLocalEnrichmentProvider:
         provider = LocalEnrichmentProvider()
         requests = [EnrichmentRequest(snippet_id=1, text="def test(): pass")]
 
-        results = []
-        async for result in provider.enrich(requests):
-            results.append(result)
+        results = [result async for result in provider.enrich(requests)]
 
         assert len(results) == 1
         assert results[0].snippet_id == 1
@@ -105,8 +102,8 @@ class TestLocalEnrichmentProvider:
     @patch("transformers.models.auto.tokenization_auto.AutoTokenizer")
     @patch("transformers.models.auto.modeling_auto.AutoModelForCausalLM")
     async def test_enrich_multiple_requests(
-        self, mock_model_class, mock_tokenizer_class
-    ):
+        self, mock_model_class: MagicMock, mock_tokenizer_class: MagicMock
+    ) -> None:
         """Test enrichment with multiple requests."""
         # Mock the tokenizer
         mock_tokenizer = MagicMock()
@@ -132,9 +129,7 @@ class TestLocalEnrichmentProvider:
             EnrichmentRequest(snippet_id=2, text="def world(): pass"),
         ]
 
-        results = []
-        async for result in provider.enrich(requests):
-            results.append(result)
+        results = [result async for result in provider.enrich(requests)]
 
         assert len(results) == 2
         assert results[0].snippet_id == 1
@@ -145,7 +140,9 @@ class TestLocalEnrichmentProvider:
     @pytest.mark.asyncio
     @patch("transformers.models.auto.tokenization_auto.AutoTokenizer")
     @patch("transformers.models.auto.modeling_auto.AutoModelForCausalLM")
-    async def test_enrich_mixed_requests(self, mock_model_class, mock_tokenizer_class):
+    async def test_enrich_mixed_requests(
+        self, mock_model_class: MagicMock, mock_tokenizer_class: MagicMock
+    ) -> None:
         """Test enrichment with mixed valid and empty requests."""
         # Mock the tokenizer
         mock_tokenizer = MagicMock()
@@ -172,9 +169,7 @@ class TestLocalEnrichmentProvider:
             EnrichmentRequest(snippet_id=3, text="   "),  # Whitespace only
         ]
 
-        results = []
-        async for result in provider.enrich(requests):
-            results.append(result)
+        results = [result async for result in provider.enrich(requests)]
 
         # Should process the valid and whitespace requests (2 total)
         assert len(results) == 2
@@ -187,8 +182,8 @@ class TestLocalEnrichmentProvider:
     @patch("transformers.models.auto.tokenization_auto.AutoTokenizer")
     @patch("transformers.models.auto.modeling_auto.AutoModelForCausalLM")
     async def test_enrich_tokenizer_initialization(
-        self, mock_model_class, mock_tokenizer_class
-    ):
+        self, mock_model_class: MagicMock, mock_tokenizer_class: MagicMock
+    ) -> None:
         """Test that tokenizer is initialized correctly."""
         # Mock the tokenizer
         mock_tokenizer = MagicMock()
@@ -212,9 +207,7 @@ class TestLocalEnrichmentProvider:
         requests = [EnrichmentRequest(snippet_id=1, text="def test(): pass")]
 
         # First call should initialize tokenizer
-        results = []
-        async for result in provider.enrich(requests):
-            results.append(result)
+        results = [result async for result in provider.enrich(requests)]
 
         # Verify tokenizer was initialized with correct model
         mock_tokenizer_class.from_pretrained.assert_called_once_with(
@@ -234,8 +227,8 @@ class TestLocalEnrichmentProvider:
     @patch("transformers.models.auto.tokenization_auto.AutoTokenizer")
     @patch("transformers.models.auto.modeling_auto.AutoModelForCausalLM")
     async def test_enrich_model_initialization(
-        self, mock_model_class, mock_tokenizer_class
-    ):
+        self, mock_model_class: MagicMock, mock_tokenizer_class: MagicMock
+    ) -> None:
         """Test that model is initialized correctly."""
         # Mock the tokenizer
         mock_tokenizer = MagicMock()
@@ -259,9 +252,7 @@ class TestLocalEnrichmentProvider:
         requests = [EnrichmentRequest(snippet_id=1, text="def test(): pass")]
 
         # First call should initialize model
-        results = []
-        async for result in provider.enrich(requests):
-            results.append(result)
+        results = [result async for result in provider.enrich(requests)]
 
         # Verify model was initialized with correct parameters
         mock_model_class.from_pretrained.assert_called_once_with(
