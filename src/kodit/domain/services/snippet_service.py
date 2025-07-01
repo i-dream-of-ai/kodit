@@ -16,7 +16,7 @@ from kodit.domain.value_objects import (
     MultiSearchRequest,
     MultiSearchResult,
     SnippetExtractionRequest,
-    SnippetListItem,
+    SnippetWithContext,
 )
 from kodit.reporting import Reporter
 
@@ -93,6 +93,7 @@ class SnippetDomainService:
                         file_id=file.id,
                         index_id=index_id,
                         content=snippet_content,
+                        summary="",  # Initially empty, will be populated by enrichment
                     )
                     saved_snippet = await self.snippet_repository.save(snippet)
                     created_snippets.append(saved_snippet)
@@ -128,22 +129,16 @@ class SnippetDomainService:
         # This delegates to the repository but provides a domain-level interface
         return list(await self.snippet_repository.get_by_index(index_id))
 
-    async def update_snippet_content(self, snippet_id: int, content: str) -> None:
-        """Update the content of an existing snippet.
-
-        Args:
-            snippet_id: The ID of the snippet to update
-            content: The new content for the snippet
-
-        """
+    async def update_snippet_summary(self, snippet_id: int, summary: str) -> None:
+        """Update the summary of an existing snippet."""
         # Get the snippet first to ensure it exists
         snippet = await self.snippet_repository.get(snippet_id)
         if not snippet:
             msg = f"Snippet not found: {snippet_id}"
             raise ValueError(msg)
 
-        # Update the content
-        snippet.content = content
+        # Update the summary
+        snippet.summary = summary
         await self.snippet_repository.save(snippet)
 
     async def delete_snippets_for_index(self, index_id: int) -> None:
@@ -157,14 +152,14 @@ class SnippetDomainService:
 
     async def search_snippets(
         self, request: MultiSearchRequest
-    ) -> list[SnippetListItem]:
+    ) -> list[SnippetWithContext]:
         """Search snippets with filters.
 
         Args:
             request: The search request containing filters
 
         Returns:
-            List of matching snippet items
+            List of matching snippet items with context
 
         """
         return list(await self.snippet_repository.search(request))
@@ -185,13 +180,22 @@ class SnippetDomainService:
         snippet_items = await self.snippet_repository.list_snippets(
             file_path, source_uri
         )
-        # Convert SnippetListItem to MultiSearchResult for unified display format
+        # Convert SnippetWithContext to MultiSearchResult for unified display format
         return [
             MultiSearchResult(
-                id=item.id,
-                uri=item.source_uri,
-                content=item.content,
-                original_scores=[],
+                id=item.snippet.id,
+                content=item.snippet.content,
+                original_scores=[],  # No scores for list operation
+                source_uri=item.source.uri,
+                relative_path=MultiSearchResult.calculate_relative_path(
+                    item.file.cloned_path, item.source.cloned_path
+                ),
+                language=MultiSearchResult.detect_language_from_extension(
+                    item.file.extension
+                ),
+                authors=[author.name for author in item.authors],
+                created_at=item.snippet.created_at,
+                summary=item.snippet.summary,
             )
             for item in snippet_items
         ]

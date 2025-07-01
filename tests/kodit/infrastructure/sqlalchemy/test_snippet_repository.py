@@ -43,8 +43,12 @@ async def test_list_snippets_by_file_path(session: AsyncSession) -> None:
     await session.commit()
 
     # Create snippets
-    snippet1 = Snippet(file_id=file.id, index_id=index.id, content="snippet 1")
-    snippet2 = Snippet(file_id=file.id, index_id=index.id, content="snippet 2")
+    snippet1 = Snippet(
+        file_id=file.id, index_id=index.id, content="snippet 1", summary=""
+    )
+    snippet2 = Snippet(
+        file_id=file.id, index_id=index.id, content="snippet 2", summary=""
+    )
     session.add(snippet1)
     session.add(snippet2)
     await session.commit()
@@ -55,12 +59,12 @@ async def test_list_snippets_by_file_path(session: AsyncSession) -> None:
 
     # Verify results
     assert len(result) == 2
-    assert result[0].content == "snippet 1"
-    assert result[0].file_path == "test.py"
-    assert result[0].source_uri == "https://github.com/test/repo.git"
-    assert result[1].content == "snippet 2"
-    assert result[1].file_path == "test.py"
-    assert result[1].source_uri == "https://github.com/test/repo.git"
+    assert result[0].snippet.content == "snippet 1"
+    assert result[0].file.uri == "test.py"
+    assert result[0].source.uri == "https://github.com/test/repo.git"
+    assert result[1].snippet.content == "snippet 2"
+    assert result[1].file.uri == "test.py"
+    assert result[1].source.uri == "https://github.com/test/repo.git"
 
 
 @pytest.mark.asyncio
@@ -117,10 +121,10 @@ async def test_list_snippets_by_source_uri(session: AsyncSession) -> None:
 
     # Create snippets
     snippet1 = Snippet(
-        file_id=file1.id, index_id=index1.id, content="snippet from repo1"
+        file_id=file1.id, index_id=index1.id, content="snippet from repo1", summary=""
     )
     snippet2 = Snippet(
-        file_id=file2.id, index_id=index2.id, content="snippet from repo2"
+        file_id=file2.id, index_id=index2.id, content="snippet from repo2", summary=""
     )
     session.add(snippet1)
     session.add(snippet2)
@@ -134,9 +138,9 @@ async def test_list_snippets_by_source_uri(session: AsyncSession) -> None:
 
     # Verify results - should only get snippets from repo1
     assert len(result) == 1
-    assert result[0].content == "snippet from repo1"
-    assert result[0].file_path == "file1.py"
-    assert result[0].source_uri == "https://github.com/test/repo1.git"
+    assert result[0].snippet.content == "snippet from repo1"
+    assert result[0].file.uri == "file1.py"
+    assert result[0].source.uri == "https://github.com/test/repo1.git"
 
 
 @pytest.mark.asyncio
@@ -185,10 +189,10 @@ async def test_list_snippets_by_directory_path(session: AsyncSession) -> None:
 
     # Create snippets for both files
     snippet1 = Snippet(
-        file_id=file1.id, index_id=index.id, content="snippet from file1"
+        file_id=file1.id, index_id=index.id, content="snippet from file1", summary=""
     )
     snippet2 = Snippet(
-        file_id=file2.id, index_id=index.id, content="snippet from file2"
+        file_id=file2.id, index_id=index.id, content="snippet from file2", summary=""
     )
     session.add(snippet1)
     session.add(snippet2)
@@ -200,11 +204,11 @@ async def test_list_snippets_by_directory_path(session: AsyncSession) -> None:
 
     # Verify results - should get snippets from both files
     assert len(result) == 2
-    assert any(s.content == "snippet from file1" for s in result)
-    assert any(s.content == "snippet from file2" for s in result)
-    assert any(s.file_path == "file1.py" for s in result)
-    assert any(s.file_path == "file2.py" for s in result)
-    assert all(s.source_uri == "https://github.com/test/repo.git" for s in result)
+    assert any(s.snippet.content == "snippet from file1" for s in result)
+    assert any(s.snippet.content == "snippet from file2" for s in result)
+    assert any(s.file.uri == "file1.py" for s in result)
+    assert any(s.file.uri == "file2.py" for s in result)
+    assert all(s.source.uri == "https://github.com/test/repo.git" for s in result)
 
 
 @pytest.mark.asyncio
@@ -239,8 +243,18 @@ async def test_list_snippets_no_filter(session: AsyncSession) -> None:
     await session.commit()
 
     # Create snippets
-    snippet1 = Snippet(file_id=file.id, index_id=index.id, content="snippet 1")
-    snippet2 = Snippet(file_id=file.id, index_id=index.id, content="snippet 2")
+    snippet1 = Snippet(
+        file_id=file.id,
+        index_id=index.id,
+        content="snippet 1",
+        summary="",
+    )
+    snippet2 = Snippet(
+        file_id=file.id,
+        index_id=index.id,
+        content="snippet 2",
+        summary="",
+    )
     session.add(snippet1)
     session.add(snippet2)
     await session.commit()
@@ -251,12 +265,12 @@ async def test_list_snippets_no_filter(session: AsyncSession) -> None:
 
     # Verify results - should get all snippets
     assert len(result) == 2
-    assert result[0].content == "snippet 1"
-    assert result[0].file_path == "test.py"
-    assert result[0].source_uri == "https://github.com/test/repo.git"
-    assert result[1].content == "snippet 2"
-    assert result[1].file_path == "test.py"
-    assert result[1].source_uri == "https://github.com/test/repo.git"
+    assert result[0].snippet.content == "snippet 1"
+    assert result[0].file.uri == "test.py"
+    assert result[0].source.uri == "https://github.com/test/repo.git"
+    assert result[1].snippet.content == "snippet 2"
+    assert result[1].file.uri == "test.py"
+    assert result[1].source.uri == "https://github.com/test/repo.git"
 
 
 @pytest.mark.asyncio
@@ -291,7 +305,7 @@ async def test_list_snippets_no_results(session: AsyncSession) -> None:
     await session.commit()
 
     # Create snippets
-    snippet = Snippet(file_id=file.id, index_id=index.id, content="snippet")
+    snippet = Snippet(file_id=file.id, index_id=index.id, content="snippet", summary="")
     session.add(snippet)
     await session.commit()
 
@@ -335,7 +349,12 @@ async def test_list_snippets_by_relative_path(session: AsyncSession) -> None:
     await session.commit()
 
     # Create a snippet
-    snippet = Snippet(file_id=file.id, index_id=index.id, content="class Beer {}")
+    snippet = Snippet(
+        file_id=file.id,
+        index_id=index.id,
+        content="class Beer {}",
+        summary="",
+    )
     session.add(snippet)
     await session.commit()
 
@@ -346,9 +365,9 @@ async def test_list_snippets_by_relative_path(session: AsyncSession) -> None:
 
     # This should return the snippet
     assert len(result) == 1
-    assert result[0].file_path == "domain/Beer.js"
-    assert result[0].content == "class Beer {}"
+    assert result[0].file.uri == "domain/Beer.js"
+    assert result[0].snippet.content == "class Beer {}"
     assert (
-        result[0].source_uri
+        result[0].source.uri
         == "https://dev.azure.com/winderai/public-test/_git/simple-ddd-brewing-demo"
     )

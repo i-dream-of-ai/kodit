@@ -157,7 +157,7 @@ class CodeIndexingApplicationService:
             snippet_results = await self.snippet_domain_service.search_snippets(
                 prefilter_request
             )
-            filtered_snippet_ids = [snippet.id for snippet in snippet_results]
+            filtered_snippet_ids = [snippet.snippet.id for snippet in snippet_results]
 
         # Gather results from different search modes
         fusion_list: list[list[FusionRequest]] = []
@@ -225,9 +225,20 @@ class CodeIndexingApplicationService:
         return [
             MultiSearchResult(
                 id=result.snippet.id,
-                uri=result.file.uri,
                 content=result.snippet.content,
                 original_scores=fr.original_scores,
+                # Enhanced fields
+                source_uri=result.source.uri,
+                relative_path=MultiSearchResult.calculate_relative_path(
+                    result.file.cloned_path, result.source.cloned_path
+                ),
+                language=MultiSearchResult.detect_language_from_extension(
+                    result.file.extension
+                ),
+                authors=[author.name for author in result.authors],
+                created_at=result.snippet.created_at,
+                # Summary from snippet entity
+                summary=result.snippet.summary,
             )
             for result, fr in zip(search_results, final_results, strict=True)
         ]
@@ -300,16 +311,8 @@ class CodeIndexingApplicationService:
         async for result in self.enrichment_service.enrich_documents(
             enrichment_request
         ):
-            # Update snippet content through domain service
-            enriched_content = (
-                result.text
-                + "\n\n```\n"
-                + next(s.content for s in snippets if s.id == result.snippet_id)
-                + "\n```"
-            )
-
-            await self.snippet_domain_service.update_snippet_content(
-                result.snippet_id, enriched_content
+            await self.snippet_domain_service.update_snippet_summary(
+                result.snippet_id, result.text
             )
 
             processed += 1
