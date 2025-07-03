@@ -1,17 +1,129 @@
-"""Domain value objects and DTOs."""
+"""Pure domain value objects and DTOs."""
 
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
+from enum import Enum, IntEnum
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import ClassVar
 
-from sqlalchemy import JSON, DateTime, Integer, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from pydantic import BaseModel
 
-from kodit.domain.entities import Author, Base, File, Snippet, Source
-from kodit.domain.enums import SnippetExtractionStrategy
+
+class SourceType(IntEnum):
+    """The type of source."""
+
+    UNKNOWN = 0
+    FOLDER = 1
+    GIT = 2
+
+
+class SnippetContentType(IntEnum):
+    """Type of snippet content."""
+
+    UNKNOWN = 0
+    ORIGINAL = 1
+    SUMMARY = 2
+
+
+class SnippetContent(BaseModel):
+    """Snippet content domain value object."""
+
+    type: SnippetContentType
+    value: str
+    language: str
+
+
+class SnippetSearchResult(BaseModel):
+    """Domain result object for snippet searches."""
+
+    snippet_id: int
+    content: str
+    summary: str
+    score: float
+    file_path: Path
+    language: str | None = None
+    authors: list[str] = []
+
+
+@dataclass(frozen=True)
+class LanguageExtensions:
+    """Value object for language to file extension mappings."""
+
+    language: str
+    extensions: list[str]
+
+    @classmethod
+    def get_supported_languages(cls) -> list[str]:
+        """Get all supported programming languages."""
+        return [
+            "python",
+            "javascript",
+            "typescript",
+            "java",
+            "c",
+            "cpp",
+            "csharp",
+            "go",
+            "rust",
+            "php",
+            "ruby",
+            "swift",
+            "kotlin",
+            "scala",
+            "r",
+            "sql",
+            "html",
+            "css",
+            "json",
+            "yaml",
+            "xml",
+            "markdown",
+            "shell",
+        ]
+
+    @classmethod
+    def get_extensions_for_language(cls, language: str) -> list[str]:
+        """Get file extensions for a given language."""
+        language_map = {
+            "python": [".py", ".pyw", ".pyi"],
+            "javascript": [".js", ".jsx", ".mjs"],
+            "typescript": [".ts", ".tsx"],
+            "java": [".java"],
+            "c": [".c", ".h"],
+            "cpp": [".cpp", ".cc", ".cxx", ".hpp", ".hxx"],
+            "csharp": [".cs"],
+            "go": [".go"],
+            "rust": [".rs"],
+            "php": [".php"],
+            "ruby": [".rb"],
+            "swift": [".swift"],
+            "kotlin": [".kt", ".kts"],
+            "scala": [".scala", ".sc"],
+            "r": [".r", ".R"],
+            "sql": [".sql"],
+            "html": [".html", ".htm"],
+            "css": [".css", ".scss", ".sass", ".less"],
+            "json": [".json"],
+            "yaml": [".yaml", ".yml"],
+            "xml": [".xml"],
+            "markdown": [".md", ".markdown"],
+            "shell": [".sh", ".bash", ".zsh", ".fish"],
+        }
+        return language_map.get(language.lower(), [])
+
+    @classmethod
+    def is_supported_language(cls, language: str) -> bool:
+        """Check if a language is supported."""
+        return language.lower() in cls.get_supported_languages()
+
+    @classmethod
+    def get_extensions_or_fallback(cls, language: str) -> list[str]:
+        """Get extensions for language or return language as extension if not found."""
+        language_lower = language.lower()
+        if cls.is_supported_language(language_lower):
+            return cls.get_extensions_for_language(language_lower)
+        return [language_lower]
 
 
 class SearchType(Enum):
@@ -20,14 +132,6 @@ class SearchType(Enum):
     BM25 = "bm25"
     VECTOR = "vector"
     HYBRID = "hybrid"
-
-
-@dataclass
-class SnippetExtractionRequest:
-    """Domain model for snippet extraction request."""
-
-    file_path: Path
-    strategy: SnippetExtractionStrategy = SnippetExtractionStrategy.METHOD_BASED
 
 
 @dataclass
@@ -101,6 +205,7 @@ class SnippetSearchFilters:
     created_after: datetime | None = None
     created_before: datetime | None = None
     source_repo: str | None = None
+    file_path: str | None = None
 
     @classmethod
     def from_cli_params(
@@ -357,16 +462,6 @@ class IndexView:
     source: str | None = None
 
 
-@dataclass
-class SnippetWithContext:
-    """Domain model for snippet with associated context information."""
-
-    source: Source
-    file: File
-    authors: list[Author]
-    snippet: Snippet
-
-
 class LanguageMapping:
     """Value object for language-to-extension mappings.
 
@@ -536,38 +631,24 @@ class LanguageMapping:
         return [language_lower]
 
 
-# Database models for value objects
-class BM25DocumentModel(Base):
-    """BM25 document model."""
+class SnippetQuery(BaseModel):
+    """Domain query object for snippet searches."""
 
-    __tablename__ = "bm25_documents"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    document_metadata: Mapped[dict[str, Any] | None] = mapped_column(
-        JSON, nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    text: str
+    search_type: SearchType = SearchType.HYBRID
+    filters: SnippetSearchFilters = SnippetSearchFilters()
+    top_k: int = 10
 
 
-class VectorDocumentModel(Base):
-    """Vector document model."""
+class SnippetExtractionStrategy(str, Enum):
+    """Different strategies for extracting snippets from files."""
 
-    __tablename__ = "vector_documents"
+    METHOD_BASED = "method_based"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    document_metadata: Mapped[dict[str, Any] | None] = mapped_column(
-        JSON, nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+
+@dataclass
+class SnippetExtractionRequest:
+    """Domain model for snippet extraction request."""
+
+    file_path: Path
+    strategy: SnippetExtractionStrategy = SnippetExtractionStrategy.METHOD_BASED

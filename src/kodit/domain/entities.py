@@ -1,200 +1,201 @@
-"""SQLAlchemy entities."""
+"""Pure domain entities using Pydantic."""
 
-from datetime import UTC, datetime
-from enum import Enum
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 
-from git import Actor
-from sqlalchemy import (
-    DateTime,
-    ForeignKey,
-    Integer,
-    String,
-    UnicodeText,
-    UniqueConstraint,
+from pydantic import AnyUrl, BaseModel
+
+from kodit.domain.value_objects import (
+    SnippetContent,
+    SnippetContentType,
+    SourceType,
 )
-from sqlalchemy import Enum as SQLAlchemyEnum
-from sqlalchemy.ext.asyncio import AsyncAttrs
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy.types import JSON
+from kodit.utils.path_utils import path_from_uri
 
 
-class Base(AsyncAttrs, DeclarativeBase):
-    """Base class for all models."""
+class Author(BaseModel):
+    """Author domain entity."""
+
+    id: int | None = None
+    name: str
+    email: str
 
 
-class CommonMixin:
-    """Common mixin for all models."""
+class File(BaseModel):
+    """File domain entity."""
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
-    )
+    id: int | None = None  # Is populated by repository
+    created_at: datetime | None = None  # Is populated by repository
+    updated_at: datetime | None = None  # Is populated by repository
+    uri: AnyUrl
+    sha256: str
+    authors: list[Author]
+    mime_type: str
 
+    def as_path(self) -> Path:
+        """Return the file as a path."""
+        return path_from_uri(str(self.uri))
 
-class SourceType(Enum):
-    """The type of source."""
-
-    UNKNOWN = 0
-    FOLDER = 1
-    GIT = 2
+    def extension(self) -> str:
+        """Return the file extension."""
+        return Path(self.as_path()).suffix.lstrip(".")
 
 
-class Source(Base, CommonMixin):
-    """Base model for tracking code sources.
+class WorkingCopy(BaseModel):
+    """Working copy value object representing cloned source location."""
 
-    This model serves as the parent table for different types of sources.
-    It provides common fields and relationships for all source types.
+    created_at: datetime | None = None  # Is populated by repository
+    updated_at: datetime | None = None  # Is populated by repository
+    remote_uri: AnyUrl
+    cloned_path: Path
+    source_type: SourceType
+    files: list[File]
 
-    Attributes:
-        id: The unique identifier for the source.
-        created_at: Timestamp when the source was created.
-        updated_at: Timestamp when the source was last updated.
-        cloned_uri: A URI to a copy of the source on the local filesystem.
-        uri: The URI of the source.
+    @classmethod
+    def sanitize_local_path(cls, path: str) -> AnyUrl:
+        """Sanitize a local path."""
+        return AnyUrl(Path(path).resolve().absolute().as_uri())
 
-    """
+    @classmethod
+    def sanitize_git_url(cls, url: str) -> AnyUrl:
+        """Remove credentials from a git URL while preserving the rest of the URL.
 
-    __tablename__ = "sources"
-    uri: Mapped[str] = mapped_column(String(1024), index=True, unique=True)
-    cloned_path: Mapped[str] = mapped_column(String(1024), index=True)
-    type: Mapped[SourceType] = mapped_column(
-        SQLAlchemyEnum(SourceType), default=SourceType.UNKNOWN, index=True
-    )
+        This function handles various git URL formats:
+        - HTTPS URLs with username:password@host
+        - HTTPS URLs with username@host (no password)
+        - SSH URLs (left unchanged)
+        - File URLs (left unchanged)
 
-    def __init__(self, uri: str, cloned_path: str, source_type: SourceType) -> None:
-        """Initialize a new Source instance for typing purposes."""
-        super().__init__()
-        self.uri = uri
-        self.cloned_path = cloned_path
-        self.type = source_type
+        Args:
+            url: The git URL that may contain credentials.
 
+        Returns:
+            The sanitized URL with credentials removed.
 
-class Author(Base, CommonMixin):
-    """Author model."""
+        Examples:
+            >>> sanitize_git_url("https://phil:token@dev.azure.com/org/project/_git/repo")
+            "https://dev.azure.com/org/project/_git/repo"
+            >>> sanitize_git_url("https://username@github.com/user/repo.git")
+            "https://github.com/user/repo.git"
+            >>> sanitize_git_url("git@github.com:user/repo.git")
+            "ssh://git@github.com/user/repo.git"
 
-    __tablename__ = "authors"
+        """
+        # Handle SSH URLs (they don't have credentials in the URL format)
+        if url.startswith("git@"):
+            # Convert git@host:path to ssh://git@host/path format for AnyUrl
+            # This maintains the same semantic meaning while making it a valid URL
+            if ":" in url and not url.startswith("ssh://"):
+                host_path = url[4:]  # Remove "git@"
+                if ":" in host_path:
+                    host, path = host_path.split(":", 1)
+                    ssh_url = f"ssh://git@{host}/{path}"
+                    return AnyUrl(ssh_url)
+            return AnyUrl(url)
+        if url.startswith("ssh://"):
+            return AnyUrl(url)
 
-    __table_args__ = (UniqueConstraint("name", "email", name="uix_author"),)
+        # Handle file URLs
+        if url.startswith("file://"):
+            return AnyUrl(url)
 
-    name: Mapped[str] = mapped_column(String(255), index=True)
-    email: Mapped[str] = mapped_column(String(255), index=True)
+        try:
+            # Parse the URL
+            parsed = urlparse(url)
 
-    @staticmethod
-    def from_actor(actor: Actor) -> "Author":
-        """Create an Author from an Actor."""
-        return Author(name=actor.name, email=actor.email)
+            # If there are no credentials, return the URL as-is
+            if not parsed.username:
+                return AnyUrl(url)
 
+            # Reconstruct the URL without credentials
+            # scheme, netloc (without username/password), path, params, query, fragment
+            sanitized_netloc = parsed.hostname
+            if parsed.port:
+                sanitized_netloc = f"{parsed.hostname}:{parsed.port}"
 
-class AuthorFileMapping(Base, CommonMixin):
-    """Author file mapping model."""
+            return AnyUrl(
+                urlunparse(
+                    (
+                        parsed.scheme,
+                        sanitized_netloc,
+                        parsed.path,
+                        parsed.params,
+                        parsed.query,
+                        parsed.fragment,
+                    )
+                )
+            )
 
-    __tablename__ = "author_file_mappings"
-
-    __table_args__ = (
-        UniqueConstraint("author_id", "file_id", name="uix_author_file_mapping"),
-    )
-
-    author_id: Mapped[int] = mapped_column(ForeignKey("authors.id"), index=True)
-    file_id: Mapped[int] = mapped_column(ForeignKey("files.id"), index=True)
-
-
-class File(Base, CommonMixin):
-    """File model."""
-
-    __tablename__ = "files"
-
-    source_id: Mapped[int] = mapped_column(ForeignKey("sources.id"))
-    mime_type: Mapped[str] = mapped_column(String(255), default="", index=True)
-    uri: Mapped[str] = mapped_column(String(1024), default="", index=True)
-    cloned_path: Mapped[str] = mapped_column(String(1024), index=True)
-    sha256: Mapped[str] = mapped_column(String(64), default="", index=True)
-    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
-    extension: Mapped[str] = mapped_column(String(255), default="", index=True)
-
-    def __init__(  # noqa: PLR0913
-        self,
-        created_at: datetime,
-        updated_at: datetime,
-        source_id: int,
-        mime_type: str,
-        uri: str,
-        cloned_path: str,
-        sha256: str,
-        size_bytes: int,
-        extension: str,
-    ) -> None:
-        """Initialize a new File instance for typing purposes."""
-        super().__init__()
-        self.created_at = created_at
-        self.updated_at = updated_at
-        self.source_id = source_id
-        self.mime_type = mime_type
-        self.uri = uri
-        self.cloned_path = cloned_path
-        self.sha256 = sha256
-        self.size_bytes = size_bytes
-        self.extension = extension
+        except Exception as e:
+            raise ValueError(f"Invalid URL: {url}") from e
 
 
-class EmbeddingType(Enum):
-    """Embedding type."""
+class Source(BaseModel):
+    """Source domain entity."""
 
-    CODE = 1
-    TEXT = 2
-
-
-class Embedding(Base, CommonMixin):
-    """Embedding model."""
-
-    __tablename__ = "embeddings"
-
-    snippet_id: Mapped[int] = mapped_column(ForeignKey("snippets.id"), index=True)
-    type: Mapped[EmbeddingType] = mapped_column(
-        SQLAlchemyEnum(EmbeddingType), index=True
-    )
-    embedding: Mapped[list[float]] = mapped_column(JSON)
+    id: int | None = None  # Is populated by repository
+    created_at: datetime | None = None  # Is populated by repository
+    updated_at: datetime | None = None  # Is populated by repository
+    working_copy: WorkingCopy
 
 
-class Index(Base, CommonMixin):
-    """Index model."""
+class Snippet(BaseModel):
+    """Snippet domain entity."""
 
-    __tablename__ = "indexes"
+    id: int | None = None  # Is populated by repository
+    created_at: datetime | None = None  # Is populated by repository
+    updated_at: datetime | None = None  # Is populated by repository
+    derives_from: list[File]
+    original_content: SnippetContent | None = None
+    summary_content: SnippetContent | None = None
 
-    source_id: Mapped[int] = mapped_column(
-        ForeignKey("sources.id"), unique=True, index=True
-    )
+    def original_text(self) -> str:
+        """Return the original content of the snippet."""
+        if self.original_content is None:
+            return ""
+        return self.original_content.value
 
-    def __init__(self, source_id: int) -> None:
-        """Initialize the index."""
-        super().__init__()
-        self.source_id = source_id
+    def summary_text(self) -> str:
+        """Return the summary content of the snippet."""
+        if self.summary_content is None:
+            return ""
+        return self.summary_content.value
+
+    def add_original_content(self, content: str, language: str) -> None:
+        """Add an original content to the snippet."""
+        self.original_content = SnippetContent(
+            type=SnippetContentType.ORIGINAL,
+            value=content,
+            language=language,
+        )
+
+    def add_summary(self, summary: str) -> None:
+        """Add a summary to the snippet."""
+        self.summary_content = SnippetContent(
+            type=SnippetContentType.SUMMARY,
+            value=summary,
+            language="markdown",
+        )
 
 
-class Snippet(Base, CommonMixin):
-    """Snippet model."""
+class Index(BaseModel):
+    """Index domain entity."""
 
-    __tablename__ = "snippets"
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    source: Source
+    snippets: list[Snippet]
 
-    file_id: Mapped[int] = mapped_column(ForeignKey("files.id"), index=True)
-    index_id: Mapped[int] = mapped_column(ForeignKey("indexes.id"), index=True)
-    content: Mapped[str] = mapped_column(UnicodeText, default="")
-    summary: Mapped[str] = mapped_column(UnicodeText, default="")
 
-    def __init__(
-        self,
-        file_id: int,
-        index_id: int,
-        content: str,
-        summary: str = "",
-    ) -> None:
-        """Initialize the snippet."""
-        super().__init__()
-        self.file_id = file_id
-        self.index_id = index_id
-        self.content = content
-        self.summary = summary
+# FUTURE: Remove this type, use the domain to get the required information.
+@dataclass(frozen=True)
+class SnippetWithContext:
+    """Domain model for snippet with associated context information."""
+
+    source: Source
+    file: File
+    authors: list[Author]
+    snippet: Snippet

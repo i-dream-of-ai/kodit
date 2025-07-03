@@ -1,32 +1,28 @@
 """Unified application service for code indexing operations."""
 
 from dataclasses import replace
+from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kodit.domain.entities import Snippet
-from kodit.domain.enums import SnippetExtractionStrategy
+from kodit.domain.entities import Index, Snippet
 from kodit.domain.errors import EmptySourceError
 from kodit.domain.interfaces import ProgressCallback
 from kodit.domain.services.bm25_service import BM25DomainService
 from kodit.domain.services.embedding_service import EmbeddingDomainService
 from kodit.domain.services.enrichment_service import EnrichmentDomainService
-from kodit.domain.services.indexing_service import IndexingDomainService
-from kodit.domain.services.snippet_service import SnippetDomainService
-from kodit.domain.services.source_service import SourceService
+from kodit.domain.services.index_query_service import IndexQueryService
+from kodit.domain.services.index_service import IndexDomainService
 from kodit.domain.value_objects import (
     Document,
-    EnrichmentIndexRequest,
-    EnrichmentRequest,
     FusionRequest,
-    IndexCreateRequest,
     IndexRequest,
-    IndexView,
     MultiSearchRequest,
     MultiSearchResult,
     SearchRequest,
     SearchResult,
+    SnippetSearchFilters,
 )
 from kodit.log import log_event
 from kodit.reporting import Reporter
@@ -37,9 +33,8 @@ class CodeIndexingApplicationService:
 
     def __init__(  # noqa: PLR0913
         self,
-        indexing_domain_service: IndexingDomainService,
-        snippet_domain_service: SnippetDomainService,
-        source_service: SourceService,
+        indexing_domain_service: IndexDomainService,
+        index_query_service: IndexQueryService,
         bm25_service: BM25DomainService,
         code_search_service: EmbeddingDomainService,
         text_search_service: EmbeddingDomainService,
@@ -47,9 +42,8 @@ class CodeIndexingApplicationService:
         session: AsyncSession,
     ) -> None:
         """Initialize the code indexing application service."""
-        self.indexing_domain_service = indexing_domain_service
-        self.snippet_domain_service = snippet_domain_service
-        self.source_service = source_service
+        self.index_domain_service = indexing_domain_service
+        self.index_query_service = index_query_service
         self.bm25_service = bm25_service
         self.code_search_service = code_search_service
         self.text_search_service = text_search_service
@@ -57,90 +51,67 @@ class CodeIndexingApplicationService:
         self.session = session
         self.log = structlog.get_logger(__name__)
 
-    async def create_index(self, source_id: int) -> IndexView:
+    async def create_index_from_uri(
+        self, uri: str, progress_callback: ProgressCallback | None = None
+    ) -> Index:
         """Create a new index for a source."""
         log_event("kodit.index.create")
 
-        # Validate source exists
-        source = await self.source_service.get(source_id)
-
-        # Create index
-        request = IndexCreateRequest(source_id=source.id)
-        index_view = await self.indexing_domain_service.create_index(request)
-
-        # Single transaction commit
+        index = await self.index_domain_service.create_index(uri, progress_callback)
         await self.session.commit()
-
-        return index_view
-
-    async def list_indexes(self) -> list[IndexView]:
-        """List all available indexes with their details."""
-        indexes = await self.indexing_domain_service.list_indexes()
-
-        # Telemetry
-        log_event(
-            "kodit.index.list",
-            {
-                "num_indexes": len(indexes),
-                "num_snippets": sum([index.num_snippets for index in indexes]),
-            },
-        )
-
-        return indexes
+        return index
 
     async def run_index(
-        self, index_id: int, progress_callback: ProgressCallback | None = None
+        self, index: Index, progress_callback: ProgressCallback | None = None
     ) -> None:
         """Run the complete indexing process for a specific index."""
         log_event("kodit.index.run")
 
-        # Validate index
-        index = await self.indexing_domain_service.get_index(index_id)
-        if not index:
-            msg = f"Index not found: {index_id}"
+        if not index or not index.id:
+            msg = f"Index has no ID: {index}"
             raise ValueError(msg)
 
-        # Delete old snippets to make way for reindexing
-        # In the future we will only reindex snippets that have changed
-        await self.snippet_domain_service.delete_snippets_for_index(index.id)
+        if len(index.source.working_copy.files) == 0:
+            msg = f"No files to index for index {index.id}"
+            raise EmptySourceError(msg)
+
+        # Delete all old snippets
+        await self.index_domain_service.delete_snippets(index.id)
+
+        # Future: Refresh working copy
 
         # Extract and create snippets (domain service handles progress)
         self.log.info("Creating snippets for files", index_id=index.id)
-        snippets = await self.snippet_domain_service.extract_and_create_snippets(
-            index_id=index.id,
-            strategy=SnippetExtractionStrategy.METHOD_BASED,
-            progress_callback=progress_callback,
+        index = await self.index_domain_service.extract_snippets(
+            index=index, progress_callback=progress_callback
         )
+        await self.session.commit()
 
         # Check if any snippets were extracted
-        if not snippets:
+        if not index.snippets or len(index.snippets) == 0:
             msg = f"No indexable snippets found for index {index.id}"
             raise EmptySourceError(msg)
 
-        # Commit snippets to ensure they have IDs for indexing
-        await self.session.commit()
-
         # Create BM25 index
         self.log.info("Creating keyword index")
-        await self._create_bm25_index(snippets, progress_callback)
+        await self._create_bm25_index(index.snippets, progress_callback)
 
         # Create code embeddings
         self.log.info("Creating semantic code index")
-        await self._create_code_embeddings(snippets, progress_callback)
+        await self._create_code_embeddings(index.snippets, progress_callback)
 
         # Enrich snippets
-        self.log.info("Enriching snippets", num_snippets=len(snippets))
-        await self._enrich_snippets(snippets, progress_callback)
-
-        # Get refreshed snippets after enrichment
-        snippets = await self.snippet_domain_service.get_snippets_for_index(index.id)
+        self.log.info("Enriching snippets", num_snippets=len(index.snippets))
+        index = await self.index_domain_service.enrich_snippets(
+            index=index, progress_callback=progress_callback
+        )
 
         # Create text embeddings (on enriched content)
         self.log.info("Creating semantic text index")
-        await self._create_text_embeddings(snippets, progress_callback)
+        await self._create_text_embeddings(index.snippets, progress_callback)
 
         # Update index timestamp
-        await self.indexing_domain_service.update_index_timestamp(index.id)
+        await self.index_domain_service.update_index_timestamp(index.id)
 
         # Single transaction commit for the entire operation
         await self.session.commit()
@@ -154,10 +125,12 @@ class CodeIndexingApplicationService:
         if request.filters:
             # Use domain service for filtering
             prefilter_request = replace(request, top_k=None)
-            snippet_results = await self.snippet_domain_service.search_snippets(
+            snippet_results = await self.index_query_service.search_snippets(
                 prefilter_request
             )
-            filtered_snippet_ids = [snippet.snippet.id for snippet in snippet_results]
+            filtered_snippet_ids = [
+                snippet.snippet.id for snippet in snippet_results if snippet.snippet.id
+            ]
 
         # Gather results from different search modes
         fusion_list: list[list[FusionRequest]] = []
@@ -209,7 +182,7 @@ class CodeIndexingApplicationService:
             return []
 
         # Fusion ranking
-        final_results = self.indexing_domain_service.perform_fusion(
+        final_results = await self.index_query_service.perform_fusion(
             rankings=fusion_list,
             k=60,  # This is a parameter in the RRF algorithm, not top_k
         )
@@ -218,27 +191,29 @@ class CodeIndexingApplicationService:
         final_results = final_results[: request.top_k]
 
         # Get snippet details
-        search_results = await self.indexing_domain_service.get_snippets_by_ids(
+        search_results = await self.index_query_service.get_snippets_by_ids(
             [x.id for x in final_results]
         )
 
         return [
             MultiSearchResult(
-                id=result.snippet.id,
-                content=result.snippet.content,
+                id=result.snippet.id or 0,
+                content=result.snippet.original_text(),
                 original_scores=fr.original_scores,
                 # Enhanced fields
-                source_uri=result.source.uri,
-                relative_path=MultiSearchResult.calculate_relative_path(
-                    result.file.cloned_path, result.source.cloned_path
+                source_uri=str(result.source.working_copy.remote_uri),
+                relative_path=str(
+                    result.file.as_path().relative_to(
+                        result.source.working_copy.cloned_path
+                    )
                 ),
                 language=MultiSearchResult.detect_language_from_extension(
-                    result.file.extension
+                    result.file.extension()
                 ),
                 authors=[author.name for author in result.authors],
-                created_at=result.snippet.created_at,
+                created_at=result.snippet.created_at or datetime.now(UTC),
                 # Summary from snippet entity
-                summary=result.snippet.summary,
+                summary=result.snippet.summary_text(),
             )
             for result, fr in zip(search_results, final_results, strict=True)
         ]
@@ -248,19 +223,53 @@ class CodeIndexingApplicationService:
     ) -> list[MultiSearchResult]:
         """List snippets with optional filtering."""
         log_event("kodit.index.list_snippets")
-        return await self.snippet_domain_service.list_snippets(file_path, source_uri)
+        snippet_results = await self.index_query_service.search_snippets(
+            request=MultiSearchRequest(
+                filters=SnippetSearchFilters(
+                    file_path=file_path,
+                    source_repo=source_uri,
+                )
+            ),
+        )
+        return [
+            MultiSearchResult(
+                id=result.snippet.id or 0,
+                content=result.snippet.original_text(),
+                original_scores=[0.0],
+                # Enhanced fields
+                source_uri=str(result.source.working_copy.remote_uri),
+                relative_path=str(
+                    result.file.as_path().relative_to(
+                        result.source.working_copy.cloned_path
+                    )
+                ),
+                language=MultiSearchResult.detect_language_from_extension(
+                    result.file.extension()
+                ),
+                authors=[author.name for author in result.authors],
+                created_at=result.snippet.created_at or datetime.now(UTC),
+                # Summary from snippet entity
+                summary=result.snippet.summary_text(),
+            )
+            for result in snippet_results
+        ]
 
+    # FUTURE: BM25 index enriched content too
     async def _create_bm25_index(
         self, snippets: list[Snippet], progress_callback: ProgressCallback | None = None
     ) -> None:
         reporter = Reporter(self.log, progress_callback)
         await reporter.start("bm25_index", len(snippets), "Creating keyword index...")
 
+        for _snippet in snippets:
+            pass
+
         await self.bm25_service.index_documents(
             IndexRequest(
                 documents=[
-                    Document(snippet_id=snippet.id, text=snippet.content)
+                    Document(snippet_id=snippet.id, text=snippet.original_text())
                     for snippet in snippets
+                    if snippet.id
                 ]
             )
         )
@@ -279,8 +288,9 @@ class CodeIndexingApplicationService:
         async for result in self.code_search_service.index_documents(
             IndexRequest(
                 documents=[
-                    Document(snippet_id=snippet.id, text=snippet.content)
+                    Document(snippet_id=snippet.id, text=snippet.original_text())
                     for snippet in snippets
+                    if snippet.id
                 ]
             )
         ):
@@ -294,34 +304,6 @@ class CodeIndexingApplicationService:
 
         await reporter.done("code_embeddings")
 
-    async def _enrich_snippets(
-        self, snippets: list[Snippet], progress_callback: ProgressCallback | None = None
-    ) -> None:
-        reporter = Reporter(self.log, progress_callback)
-        await reporter.start("enrichment", len(snippets), "Enriching snippets...")
-
-        enrichment_request = EnrichmentIndexRequest(
-            requests=[
-                EnrichmentRequest(snippet_id=snippet.id, text=snippet.content)
-                for snippet in snippets
-            ]
-        )
-
-        processed = 0
-        async for result in self.enrichment_service.enrich_documents(
-            enrichment_request
-        ):
-            await self.snippet_domain_service.update_snippet_summary(
-                result.snippet_id, result.text
-            )
-
-            processed += 1
-            await reporter.step(
-                "enrichment", processed, len(snippets), "Enriching snippets..."
-            )
-
-        await reporter.done("enrichment")
-
     async def _create_text_embeddings(
         self, snippets: list[Snippet], progress_callback: ProgressCallback | None = None
     ) -> None:
@@ -330,14 +312,27 @@ class CodeIndexingApplicationService:
             "text_embeddings", len(snippets), "Creating text embeddings..."
         )
 
+        # Only create text embeddings for snippets that have summary content
+        documents_with_summaries = []
+        for snippet in snippets:
+            if snippet.id:
+                try:
+                    summary_text = snippet.summary_text()
+                    if summary_text.strip():  # Only add if summary is not empty
+                        documents_with_summaries.append(
+                            Document(snippet_id=snippet.id, text=summary_text)
+                        )
+                except ValueError:
+                    # Skip snippets without summary content
+                    continue
+
+        if not documents_with_summaries:
+            await reporter.done("text_embeddings", "No summaries to index")
+            return
+
         processed = 0
         async for result in self.text_search_service.index_documents(
-            IndexRequest(
-                documents=[
-                    Document(snippet_id=snippet.id, text=snippet.content)
-                    for snippet in snippets
-                ]
-            )
+            IndexRequest(documents=documents_with_summaries)
         ):
             processed += len(result)
             await reporter.step(
