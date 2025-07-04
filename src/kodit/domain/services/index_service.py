@@ -9,7 +9,6 @@ from pydantic import AnyUrl
 
 import kodit.domain.entities as domain_entities
 from kodit.domain.interfaces import ProgressCallback
-from kodit.domain.protocols import IndexRepository
 from kodit.domain.services.enrichment_service import EnrichmentDomainService
 from kodit.domain.value_objects import (
     EnrichmentIndexRequest,
@@ -54,134 +53,56 @@ class IndexDomainService:
 
     def __init__(
         self,
-        index_repository: IndexRepository,
         language_detector: LanguageDetectionService,
         snippet_extractors: Mapping[SnippetExtractionStrategy, SnippetExtractor],
         enrichment_service: EnrichmentDomainService,
         clone_dir: Path,
     ) -> None:
-        """Initialize the index domain service.
-
-        Args:
-            index_repository: Repository for Index aggregate persistence
-            snippet_extraction_service: Service for extracting snippets from files
-
-        """
-        self._index_repository = index_repository
+        """Initialize the index domain service."""
         self._clone_dir = clone_dir
         self._language_detector = language_detector
         self._snippet_extractors = snippet_extractors
         self._enrichment_service = enrichment_service
         self.log = structlog.get_logger(__name__)
 
-    async def create_index(
+    async def prepare_index(
         self,
         uri_or_path_like: str,  # Must include user/pass, etc
         progress_callback: ProgressCallback | None = None,
-    ) -> domain_entities.Index:
-        """Create a new index and populate the working copy with files."""
-        sanitized_uri = self._sanitize_uri(uri_or_path_like)
-        self.log.debug("Creating index", uri=str(sanitized_uri))
+    ) -> domain_entities.WorkingCopy:
+        """Prepare an index by scanning files and creating working copy."""
+        sanitized_uri, source_type = self.sanitize_uri(uri_or_path_like)
+        reporter = Reporter(self.log, progress_callback)
+        self.log.info("Preparing source", uri=str(sanitized_uri))
 
-        # Check if index already exists
-        existing_index = await self._index_repository.get_by_uri(sanitized_uri)
-        if existing_index:
-            self.log.debug(
-                "Index already exists",
-                uri=str(sanitized_uri),
-                index_id=existing_index.id,
-            )
-            return existing_index
-
-        # Clone the source repository
-        if is_valid_clone_target(uri_or_path_like):
-            source_type = domain_entities.SourceType.GIT
-            sanitized_uri = domain_entities.WorkingCopy.sanitize_git_url(
-                uri_or_path_like
-            )
-            git_working_copy_provider = GitWorkingCopyProvider(self._clone_dir)
-            local_path = await git_working_copy_provider.prepare(uri_or_path_like)
-        elif Path(uri_or_path_like).is_dir():
-            source_type = domain_entities.SourceType.FOLDER
-            sanitized_uri = domain_entities.WorkingCopy.sanitize_local_path(
-                uri_or_path_like
-            )
+        if source_type == domain_entities.SourceType.FOLDER:
+            await reporter.start("prepare_index", 1, "Scanning source...")
             local_path = path_from_uri(str(sanitized_uri))
+        elif source_type == domain_entities.SourceType.GIT:
+            source_type = domain_entities.SourceType.GIT
+            git_working_copy_provider = GitWorkingCopyProvider(self._clone_dir)
+            await reporter.start("prepare_index", 1, "Cloning source...")
+            local_path = await git_working_copy_provider.prepare(uri_or_path_like)
+            await reporter.done("prepare_index")
         else:
             raise ValueError(f"Unsupported source: {uri_or_path_like}")
 
-        # Get files to process using ignore patterns
-        ignore_provider = GitIgnorePatternProvider(local_path)
-        files: list[domain_entities.File] = []
-        file_paths = [
-            f
-            for f in local_path.rglob("*")
-            if f.is_file() and not ignore_provider.should_ignore(f)
-        ]
-        file_count = len(file_paths)
-        if file_count == 0:
-            self.log.info("No files to index", uri=str(sanitized_uri))
-            raise ValueError("No files to index")
+        await reporter.done("prepare_index")
 
-        reporter = Reporter(self.log, progress_callback)
-        await reporter.start("scan_files", file_count, "Scanning files...")
-
-        metadata_extractor = FileMetadataExtractor(source_type)
-
-        for i, file_path in enumerate(file_paths):
-            # Create domain file entity
-            try:
-                files.append(await metadata_extractor.extract(file_path=file_path))
-            except (OSError, ValueError) as e:
-                self.log.debug("Skipping file", file=str(file_path), error=str(e))
-                continue
-
-            await reporter.step(
-                "scan_files", i + 1, file_count, f"Scanned {file_path.name}"
-            )
-
-        await reporter.done("scan_files")
-
-        # Create updated working copy
-        working_copy = domain_entities.WorkingCopy(
+        return domain_entities.WorkingCopy(
             remote_uri=sanitized_uri,
             cloned_path=local_path,
             source_type=source_type,
-            files=files,
+            files=[],
         )
 
-        return await self._index_repository.create(sanitized_uri, working_copy)
-
-    async def update_index_timestamp(self, index_id: int) -> None:
-        """Update the timestamp of an index.
-
-        Args:
-            index_id: The ID of the index to update.
-
-        """
-        await self._index_repository.update_index_timestamp(index_id)
-
-    async def delete_snippets(self, index_id: int) -> None:
-        """Delete all snippets from an index."""
-        await self._index_repository.delete_snippets(index_id)
-
-    async def extract_snippets(
+    async def extract_snippets_from_index(
         self,
         index: domain_entities.Index,
         strategy: SnippetExtractionStrategy = SnippetExtractionStrategy.METHOD_BASED,
         progress_callback: ProgressCallback | None = None,
     ) -> domain_entities.Index:
-        """Extract code snippets from files in the index.
-
-        Args:
-            index: The Index aggregate to extract snippets from
-            strategy: The extraction strategy to use
-            progress_callback: Optional callback for progress reporting
-
-        Returns:
-            Updated Index aggregate with extracted snippets
-
-        """
+        """Extract code snippets from files in the index."""
         file_count = len(index.source.working_copy.files)
 
         self.log.info(
@@ -191,14 +112,16 @@ class IndexDomainService:
             strategy=strategy.value,
         )
 
-        files = index.source.working_copy.files
-        snippets = []
+        # Only create snippets for files that have been added or modified
+        files = index.source.working_copy.changed_files()
+        index.delete_snippets_for_files(files)
 
         reporter = Reporter(self.log, progress_callback)
         await reporter.start(
             "extract_snippets", len(files), "Extracting code snippets..."
         )
 
+        new_snippets = []
         for i, domain_file in enumerate(files, 1):
             try:
                 # Extract snippets from file
@@ -211,7 +134,7 @@ class IndexDomainService:
                         derives_from=[domain_file],
                     )
                     snippet.add_original_content(snippet_text, result.language)
-                    snippets.append(snippet)
+                    new_snippets.append(snippet)
 
             except (OSError, ValueError) as e:
                 self.log.debug(
@@ -225,55 +148,23 @@ class IndexDomainService:
                 "extract_snippets", i, len(files), f"Processed {domain_file.uri.path}"
             )
 
-        # Add snippets to the index
-        if snippets:
-            await self._index_repository.add_snippets(index.id, snippets)
-
+        index.snippets.extend(new_snippets)
         await reporter.done("extract_snippets")
+        return index
 
-        # Return updated index
-        return await self._index_repository.get(index.id) or index
-
-    async def get_index_by_uri(self, uri: AnyUrl) -> domain_entities.Index | None:
-        """Get an index by source URI.
-
-        Args:
-            uri: The URI of the source repository
-
-        Returns:
-            The Index aggregate if found, None otherwise
-
-        """
-        return await self._index_repository.get_by_uri(uri)
-
-    async def get_index_by_id(self, index_id: int) -> domain_entities.Index | None:
-        """Get an index by ID.
-
-        Args:
-            index_id: The ID of the index
-
-        Returns:
-            The Index aggregate if found, None otherwise
-
-        """
-        return await self._index_repository.get(index_id)
-
-    async def enrich_snippets(
+    async def enrich_snippets_in_index(
         self,
-        index: domain_entities.Index,
+        snippets: list[domain_entities.Snippet],
         progress_callback: ProgressCallback | None = None,
-    ) -> domain_entities.Index:
+    ) -> list[domain_entities.Snippet]:
         """Enrich snippets with AI-generated summaries."""
-        if not index.id:
-            raise ValueError("Index has no ID")
-
-        if not index.snippets or len(index.snippets) == 0:
-            return index
+        if not snippets or len(snippets) == 0:
+            return snippets
 
         reporter = Reporter(self.log, progress_callback)
-        await reporter.start("enrichment", len(index.snippets), "Enriching snippets...")
+        await reporter.start("enrichment", len(snippets), "Enriching snippets...")
 
-        snippet_map = {snippet.id: snippet for snippet in index.snippets if snippet.id}
+        snippet_map = {snippet.id: snippet for snippet in snippets if snippet.id}
 
         enrichment_request = EnrichmentIndexRequest(
             requests=[
@@ -290,17 +181,11 @@ class IndexDomainService:
 
             processed += 1
             await reporter.step(
-                "enrichment", processed, len(index.snippets), "Enriching snippets..."
+                "enrichment", processed, len(snippets), "Enriching snippets..."
             )
 
-        await self._index_repository.update_snippets(
-            index.id, list(snippet_map.values())
-        )
         await reporter.done("enrichment")
-        new_index = await self._index_repository.get(index.id)
-        if not new_index:
-            raise ValueError("Index not found after enrichment")
-        return new_index
+        return list(snippet_map.values())
 
     async def _extract_snippets(
         self, request: SnippetExtractionRequest
@@ -324,12 +209,115 @@ class IndexDomainService:
 
         return SnippetExtractionResult(snippets=filtered_snippets, language=language)
 
-    def _sanitize_uri(self, uri_or_path_like: str) -> AnyUrl:
+    def sanitize_uri(
+        self, uri_or_path_like: str
+    ) -> tuple[AnyUrl, domain_entities.SourceType]:
         """Convert a URI or path-like string to a URI."""
-        # If it's git-clonable, it's valid
-        if is_valid_clone_target(uri_or_path_like):
-            return domain_entities.WorkingCopy.sanitize_git_url(uri_or_path_like)
-        # If it's a local directory, it's valid
+        # First, check if it's a local directory (more reliable than git check)
         if Path(uri_or_path_like).is_dir():
-            return domain_entities.WorkingCopy.sanitize_local_path(uri_or_path_like)
+            return (
+                domain_entities.WorkingCopy.sanitize_local_path(uri_or_path_like),
+                domain_entities.SourceType.FOLDER,
+            )
+
+        # Then check if it's git-clonable
+        if is_valid_clone_target(uri_or_path_like):
+            return (
+                domain_entities.WorkingCopy.sanitize_git_url(uri_or_path_like),
+                domain_entities.SourceType.GIT,
+            )
+
         raise ValueError(f"Unsupported source: {uri_or_path_like}")
+
+    async def refresh_working_copy(
+        self,
+        working_copy: domain_entities.WorkingCopy,
+        progress_callback: ProgressCallback | None = None,
+    ) -> domain_entities.WorkingCopy:
+        """Refresh the working copy."""
+        metadata_extractor = FileMetadataExtractor(working_copy.source_type)
+        reporter = Reporter(self.log, progress_callback)
+
+        if working_copy.source_type == domain_entities.SourceType.GIT:
+            git_working_copy_provider = GitWorkingCopyProvider(self._clone_dir)
+            await git_working_copy_provider.sync(str(working_copy.remote_uri))
+
+        current_file_paths = working_copy.list_filesystem_paths(
+            GitIgnorePatternProvider(working_copy.cloned_path)
+        )
+
+        previous_files_map = {file.as_path(): file for file in working_copy.files}
+
+        # Calculate different sets of files
+        deleted_file_paths = set(previous_files_map.keys()) - set(current_file_paths)
+        new_file_paths = set(current_file_paths) - set(previous_files_map.keys())
+        modified_file_paths = set(current_file_paths) & set(previous_files_map.keys())
+        num_files_to_process = (
+            len(deleted_file_paths) + len(new_file_paths) + len(modified_file_paths)
+        )
+        self.log.info(
+            "Refreshing working copy",
+            num_deleted=len(deleted_file_paths),
+            num_new=len(new_file_paths),
+            num_modified=len(modified_file_paths),
+            num_total_changes=num_files_to_process,
+            num_dirty=len(working_copy.dirty_files()),
+        )
+
+        # Setup reporter
+        processed = 0
+        await reporter.start(
+            "refresh_working_copy", num_files_to_process, "Refreshing working copy..."
+        )
+
+        # First check to see if any files have been deleted
+        for file_path in deleted_file_paths:
+            processed += 1
+            await reporter.step(
+                "refresh_working_copy",
+                processed,
+                num_files_to_process,
+                f"Deleted {file_path.name}",
+            )
+            previous_files_map[
+                file_path
+            ].file_processing_status = domain_entities.FileProcessingStatus.DELETED
+
+        # Then check to see if there are any new files
+        for file_path in new_file_paths:
+            processed += 1
+            await reporter.step(
+                "refresh_working_copy",
+                processed,
+                num_files_to_process,
+                f"New {file_path.name}",
+            )
+            try:
+                working_copy.files.append(
+                    await metadata_extractor.extract(file_path=file_path)
+                )
+            except (OSError, ValueError) as e:
+                self.log.info("Skipping file", file=str(file_path), error=str(e))
+                continue
+
+        # Finally check if there are any modified files
+        for file_path in modified_file_paths:
+            processed += 1
+            await reporter.step(
+                "refresh_working_copy",
+                processed,
+                num_files_to_process,
+                f"Modified {file_path.name}",
+            )
+            try:
+                previous_file = previous_files_map[file_path]
+                new_file = await metadata_extractor.extract(file_path=file_path)
+                if previous_file.sha256 != new_file.sha256:
+                    previous_file.file_processing_status = (
+                        domain_entities.FileProcessingStatus.MODIFIED
+                    )
+            except (OSError, ValueError) as e:
+                self.log.info("Skipping file", file=str(file_path), error=str(e))
+                continue
+
+        return working_copy

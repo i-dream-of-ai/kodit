@@ -3,16 +3,26 @@
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Protocol
 from urllib.parse import urlparse, urlunparse
 
 from pydantic import AnyUrl, BaseModel
 
 from kodit.domain.value_objects import (
+    FileProcessingStatus,
     SnippetContent,
     SnippetContentType,
     SourceType,
 )
 from kodit.utils.path_utils import path_from_uri
+
+
+class IgnorePatternProvider(Protocol):
+    """Protocol for ignore pattern providers."""
+
+    def should_ignore(self, path: Path) -> bool:
+        """Check if a path should be ignored."""
+        ...
 
 
 class Author(BaseModel):
@@ -33,6 +43,7 @@ class File(BaseModel):
     sha256: str
     authors: list[Author]
     mime_type: str
+    file_processing_status: FileProcessingStatus
 
     def as_path(self) -> Path:
         """Return the file as a path."""
@@ -131,6 +142,57 @@ class WorkingCopy(BaseModel):
         except Exception as e:
             raise ValueError(f"Invalid URL: {url}") from e
 
+    def modified_or_deleted_files(self) -> list[File]:
+        """Return the modified or deleted files."""
+        return [
+            file
+            for file in self.files
+            if file.file_processing_status
+            in (FileProcessingStatus.MODIFIED, FileProcessingStatus.DELETED)
+        ]
+
+    def list_filesystem_paths(
+        self, ignore_provider: IgnorePatternProvider
+    ) -> list[Path]:
+        """List the filesystem paths of the files in the working copy."""
+        if not self.cloned_path.exists():
+            raise ValueError(f"Cloned path does not exist: {self.cloned_path}")
+
+        return [
+            f
+            for f in self.cloned_path.rglob("*")
+            if f.is_file() and not ignore_provider.should_ignore(f)
+        ]
+
+    def dirty_files(self) -> list[File]:
+        """Return the dirty files."""
+        return [
+            file
+            for file in self.files
+            if file.file_processing_status
+            in (FileProcessingStatus.MODIFIED, FileProcessingStatus.ADDED)
+        ]
+
+    def changed_files(self) -> list[File]:
+        """Return the changed files."""
+        return [
+            file
+            for file in self.files
+            if file.file_processing_status != FileProcessingStatus.CLEAN
+        ]
+
+    def clear_file_processing_statuses(self) -> None:
+        """Clear the file processing statuses."""
+        # First remove any files that are marked for deletion
+        self.files = [
+            file
+            for file in self.files
+            if file.file_processing_status != FileProcessingStatus.DELETED
+        ]
+        # Then clear the statuses for the remaining files
+        for file in self.files:
+            file.file_processing_status = FileProcessingStatus.CLEAN
+
 
 class Source(BaseModel):
     """Source domain entity."""
@@ -188,6 +250,14 @@ class Index(BaseModel):
     updated_at: datetime
     source: Source
     snippets: list[Snippet]
+
+    def delete_snippets_for_files(self, files: list[File]) -> None:
+        """Delete the snippets that derive from a list of files."""
+        self.snippets = [
+            snippet
+            for snippet in self.snippets
+            if not any(file in snippet.derives_from for file in files)
+        ]
 
 
 # FUTURE: Remove this type, use the domain to get the required information.
