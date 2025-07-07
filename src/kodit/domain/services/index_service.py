@@ -259,7 +259,7 @@ class IndexDomainService:
             "Refreshing working copy",
             num_deleted=len(deleted_file_paths),
             num_new=len(new_file_paths),
-            num_modified=len(modified_file_paths),
+            num_potentially_modified=len(modified_file_paths),
             num_total_changes=num_files_to_process,
             num_dirty=len(working_copy.dirty_files()),
         )
