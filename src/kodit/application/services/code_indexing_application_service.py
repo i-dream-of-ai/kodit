@@ -100,6 +100,11 @@ class CodeIndexingApplicationService:
             self.log.info("No new changes to index", index_id=index.id)
             return
 
+        # Delete the old snippets from the files that have changed
+        await self.index_repository.delete_snippets_by_file_ids(
+            [file.id for file in index.source.working_copy.changed_files() if file.id]
+        )
+
         # Extract and create snippets (domain service handles progress)
         self.log.info("Creating snippets for files", index_id=index.id)
         index = await self.index_domain_service.extract_snippets_from_index(
@@ -115,6 +120,9 @@ class CodeIndexingApplicationService:
             msg = f"Index {index.id} not found after snippet extraction"
             raise ValueError(msg)
         index = flushed_index
+        if len(index.snippets) == 0:
+            self.log.info("No snippets to index after extraction", index_id=index.id)
+            return
 
         # Create BM25 index
         self.log.info("Creating keyword index")
@@ -154,8 +162,8 @@ class CodeIndexingApplicationService:
         # Apply filters if provided
         filtered_snippet_ids: list[int] | None = None
         if request.filters:
-            # Use domain service for filtering
-            prefilter_request = replace(request, top_k=None)
+            # Use domain service for filtering (use large top_k for pre-filtering)
+            prefilter_request = replace(request, top_k=10000)
             snippet_results = await self.index_query_service.search_snippets(
                 prefilter_request
             )
