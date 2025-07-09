@@ -81,6 +81,18 @@ class AutoIndexingConfig(BaseModel):
         return v
 
 
+class PeriodicSyncConfig(BaseModel):
+    """Configuration for periodic/scheduled syncing."""
+
+    enabled: bool = Field(default=True, description="Enable periodic sync")
+    interval_seconds: float = Field(
+        default=1800, description="Interval between automatic syncs in seconds"
+    )
+    retry_attempts: int = Field(
+        default=3, description="Number of retry attempts for failed syncs"
+    )
+
+
 class CustomAutoIndexingEnvSource(EnvSettingsSource):
     """Custom environment source for parsing AutoIndexingConfig."""
 
@@ -172,6 +184,9 @@ class AppContext(BaseSettings):
     )
     auto_indexing: AutoIndexingConfig | None = Field(
         default=AutoIndexingConfig(), description="Auto-indexing configuration"
+    )
+    periodic_sync: PeriodicSyncConfig = Field(
+        default=PeriodicSyncConfig(), description="Periodic sync configuration"
     )
     _db: Database | None = None
 
