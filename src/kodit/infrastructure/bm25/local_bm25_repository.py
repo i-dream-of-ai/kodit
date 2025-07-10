@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import aiofiles
-import Stemmer
+import Stemmer  # type: ignore[import-not-found]
 import structlog
 
 from kodit.domain.services.bm25_service import BM25Repository
@@ -19,8 +19,8 @@ from kodit.domain.value_objects import (
 )
 
 if TYPE_CHECKING:
-    import bm25s
-    from bm25s.tokenization import Tokenized
+    import bm25s  # type: ignore[import-untyped]
+    from bm25s.tokenization import Tokenized  # type: ignore[import-untyped]
 
 SNIPPET_IDS_FILE = "snippet_ids.jsonl"
 
