@@ -7,7 +7,8 @@ from unittest.mock import Mock
 
 import pytest
 from pydantic import AnyUrl
-from tree_sitter_language_pack import SupportedLanguage
+from tree_sitter import Parser
+from tree_sitter_language_pack import SupportedLanguage, get_language
 
 from kodit.domain.entities import File, Snippet
 from kodit.domain.value_objects import FileProcessingStatus
@@ -97,17 +98,31 @@ class TestFunctionInfo:
     """Test FunctionInfo dataclass."""
 
     def test_function_info_creation(self) -> None:
-        """Test FunctionInfo creation."""
-        mock_node = Mock()
+        """Test FunctionInfo creation with real tree-sitter node."""
+        # Create a real tree-sitter node from Python code
+        python_code = "def test_function(): pass"
+        language = get_language("python")
+        parser = Parser(language)
+        tree = parser.parse(python_code.encode())
+
+        # Find the function definition node
+        real_node = None
+        for node in tree.root_node.children:
+            if node.type == "function_definition":
+                real_node = node
+                break
+
+        assert real_node is not None, "Should find function definition node"
+
         func_info = FunctionInfo(
             file=Path("test.py"),
-            node=mock_node,
+            node=real_node,
             span=(0, 100),
             qualified_name="test.func",
         )
 
         assert func_info.file == Path("test.py")
-        assert func_info.node == mock_node
+        assert func_info.node == real_node
         assert func_info.span == (0, 100)
         assert func_info.qualified_name == "test.func"
 
@@ -116,11 +131,14 @@ class TestAnalyzerState:
     """Test AnalyzerState dataclass."""
 
     def test_analyzer_state_creation(self) -> None:
-        """Test AnalyzerState creation with defaults."""
-        mock_parser = Mock()
-        state = AnalyzerState(parser=mock_parser)
+        """Test AnalyzerState creation with real parser."""
+        # Create a real tree-sitter parser
+        language = get_language("python")
+        real_parser = Parser(language)
 
-        assert state.parser == mock_parser
+        state = AnalyzerState(parser=real_parser)
+
+        assert state.parser == real_parser
         assert state.files == []
         assert state.asts == {}
         assert state.def_index == {}
@@ -370,12 +388,44 @@ class TestSlicer:
                     snippets = slicer.extract_snippets([file_obj], lang)
                     # Should return some result without error
                     assert isinstance(snippets, list)
-                except RuntimeError:
-                    # Expected if tree-sitter setup fails
-                    pass
                 except ValueError:
                     # Should not get "unsupported language" error for case variations
                     pytest.fail("Should not raise ValueError for case variations")
+
+    def test_walk_tree_cycle_detection(self) -> None:
+        """Test that _walk_tree method has cycle detection to prevent recursion."""
+        slicer = Slicer()
+
+        # Create mock nodes that could cause circular references
+        mock_node1 = Mock()
+        mock_node2 = Mock()
+
+        # Set up byte positions (they can be the same - this is valid in tree-sitter)
+        mock_node1.start_byte = 0
+        mock_node1.end_byte = 10
+        mock_node2.start_byte = 5
+        mock_node2.end_byte = 15
+
+        # Set up children relationships to create an actual cycle
+        # (the same node object appears twice in the tree)
+        mock_node1.children = [mock_node2]
+        mock_node2.children = [mock_node1]  # This creates a cycle
+
+        # This should complete without infinite recursion due to cycle detection
+        try:
+            nodes = list(slicer._walk_tree(mock_node1))  # noqa: SLF001
+
+            # Should get exactly 2 unique nodes due to cycle detection
+            # (node1 and node2, but node1 won't be traversed again)
+            assert len(nodes) == 2, f"Expected 2 unique nodes, got {len(nodes)}"
+            assert mock_node1 in nodes, "Should contain the original node"
+            assert mock_node2 in nodes, "Should contain the child node"
+            # Each node should appear exactly once despite the cycle
+            assert nodes.count(mock_node1) == 1, "Node1 should appear exactly once"
+            assert nodes.count(mock_node2) == 1, "Node2 should appear exactly once"
+
+        except RecursionError:
+            pytest.fail("RecursionError raised - cycle detection not working properly")
 
 
 class TestConfigurationIntegrity:
@@ -500,21 +550,17 @@ class TestMultiFileIntegration:
         assert "models.py" in filenames
         assert "utils.py" in filenames
 
-        try:
-            slicer = Slicer()
-            file_objs = [create_file_from_path(f) for f in py_files]
-            snippets = slicer.extract_snippets(file_objs, "python")
+        slicer = Slicer()
+        file_objs = [create_file_from_path(f) for f in py_files]
+        snippets = slicer.extract_snippets(file_objs, "python")
 
-            # Should extract some snippets
-            assert len(snippets) >= 3
+        # Should extract some snippets
+        assert len(snippets) >= 3
 
-            # Snippets should be Snippet domain objects
-            for snippet in snippets:
-                assert isinstance(snippet, Snippet)
-                assert len(snippet.original_text()) > 0
-
-        except RuntimeError:
-            pytest.skip("Tree-sitter setup not available")
+        # Snippets should be Snippet domain objects
+        for snippet in snippets:
+            assert isinstance(snippet, Snippet)
+            assert len(snippet.original_text()) > 0
 
     def test_csharp_multi_file_analysis(self) -> None:
         """Test analyzing a multi-file C# project."""
@@ -530,16 +576,12 @@ class TestMultiFileIntegration:
         assert "Models.cs" in filenames
         assert "Utils.cs" in filenames
 
-        try:
-            slicer = Slicer()
-            file_objs = [create_file_from_path(f) for f in cs_files]
-            snippets = slicer.extract_snippets(file_objs, "csharp")
+        slicer = Slicer()
+        file_objs = [create_file_from_path(f) for f in cs_files]
+        snippets = slicer.extract_snippets(file_objs, "csharp")
 
-            # Should extract some snippets
-            assert len(snippets) >= 0  # May not find functions in all test files
-
-        except RuntimeError:
-            pytest.skip("Tree-sitter setup not available")
+        # Should extract some snippets
+        assert len(snippets) >= 0  # May not find functions in all test files
 
     def test_html_multi_file_analysis(self) -> None:
         """Test analyzing a multi-file HTML project."""
@@ -555,16 +597,12 @@ class TestMultiFileIntegration:
         assert "components.html" in filenames
         assert "forms.html" in filenames
 
-        try:
-            slicer = Slicer()
-            file_objs = [create_file_from_path(f) for f in html_files]
-            snippets = slicer.extract_snippets(file_objs, "html")
+        slicer = Slicer()
+        file_objs = [create_file_from_path(f) for f in html_files]
+        snippets = slicer.extract_snippets(file_objs, "html")
 
-            # Should extract some snippets
-            assert len(snippets) >= 0  # May not find functions in all test files
-
-        except RuntimeError:
-            pytest.skip("Tree-sitter setup not available")
+        # Should extract some snippets
+        assert len(snippets) >= 0  # May not find functions in all test files
 
     def test_css_multi_file_analysis(self) -> None:
         """Test analyzing a multi-file CSS project."""
@@ -580,16 +618,12 @@ class TestMultiFileIntegration:
         assert "components.css" in filenames
         assert "utilities.css" in filenames
 
-        try:
-            slicer = Slicer()
-            file_objs = [create_file_from_path(f) for f in css_files]
-            snippets = slicer.extract_snippets(file_objs, "css")
+        slicer = Slicer()
+        file_objs = [create_file_from_path(f) for f in css_files]
+        snippets = slicer.extract_snippets(file_objs, "css")
 
-            # Should extract some snippets
-            assert len(snippets) >= 0  # May not find functions in all test files
-
-        except RuntimeError:
-            pytest.skip("Tree-sitter setup not available")
+        # Should extract some snippets
+        assert len(snippets) >= 0  # May not find functions in all test files
 
     def test_javascript_multi_file_analysis(self) -> None:
         """Test analyzing a multi-file JavaScript project."""
@@ -605,16 +639,12 @@ class TestMultiFileIntegration:
         assert "models.js" in filenames
         assert "utils.js" in filenames
 
-        try:
-            slicer = Slicer()
-            file_objs = [create_file_from_path(f) for f in js_files]
-            snippets = slicer.extract_snippets(file_objs, "javascript")
+        slicer = Slicer()
+        file_objs = [create_file_from_path(f) for f in js_files]
+        snippets = slicer.extract_snippets(file_objs, "javascript")
 
-            # Should extract some snippets
-            assert len(snippets) >= 0  # May not find functions in all test files
-
-        except RuntimeError:
-            pytest.skip("Tree-sitter setup not available")
+        # Should extract some snippets
+        assert len(snippets) >= 0  # May not find functions in all test files
 
     def test_go_multi_file_analysis(self) -> None:
         """Test analyzing a multi-file Go project."""
@@ -630,16 +660,12 @@ class TestMultiFileIntegration:
         assert "models.go" in filenames
         assert "utils.go" in filenames
 
-        try:
-            slicer = Slicer()
-            file_objs = [create_file_from_path(f) for f in go_files]
-            snippets = slicer.extract_snippets(file_objs, "go")
+        slicer = Slicer()
+        file_objs = [create_file_from_path(f) for f in go_files]
+        snippets = slicer.extract_snippets(file_objs, "go")
 
-            # Should extract some snippets
-            assert len(snippets) >= 0  # May not find functions in all test files
-
-        except RuntimeError:
-            pytest.skip("Tree-sitter setup not available")
+        # Should extract some snippets
+        assert len(snippets) >= 0  # May not find functions in all test files
 
     def test_rust_multi_file_analysis(self) -> None:
         """Test analyzing a multi-file Rust project."""
@@ -655,16 +681,12 @@ class TestMultiFileIntegration:
         assert "models.rs" in filenames
         assert "utils.rs" in filenames
 
-        try:
-            slicer = Slicer()
-            file_objs = [create_file_from_path(f) for f in rs_files]
-            snippets = slicer.extract_snippets(file_objs, "rust")
+        slicer = Slicer()
+        file_objs = [create_file_from_path(f) for f in rs_files]
+        snippets = slicer.extract_snippets(file_objs, "rust")
 
-            # Should extract some snippets
-            assert len(snippets) >= 0  # May not find functions in all test files
-
-        except RuntimeError:
-            pytest.skip("Tree-sitter setup not available")
+        # Should extract some snippets
+        assert len(snippets) >= 0  # May not find functions in all test files
 
     def test_c_multi_file_analysis(self) -> None:
         """Test analyzing a multi-file C project."""
@@ -680,16 +702,12 @@ class TestMultiFileIntegration:
         assert "models.c" in filenames
         assert "utils.c" in filenames
 
-        try:
-            slicer = Slicer()
-            file_objs = [create_file_from_path(f) for f in c_files]
-            snippets = slicer.extract_snippets(file_objs, "c")
+        slicer = Slicer()
+        file_objs = [create_file_from_path(f) for f in c_files]
+        snippets = slicer.extract_snippets(file_objs, "c")
 
-            # Should extract some snippets
-            assert len(snippets) >= 0  # May not find functions in all test files
-
-        except RuntimeError:
-            pytest.skip("Tree-sitter setup not available")
+        # Should extract some snippets
+        assert len(snippets) >= 0  # May not find functions in all test files
 
     def test_cpp_multi_file_analysis(self) -> None:
         """Test analyzing a multi-file C++ project."""
@@ -705,16 +723,12 @@ class TestMultiFileIntegration:
         assert "models.cpp" in filenames
         assert "utils.cpp" in filenames
 
-        try:
-            slicer = Slicer()
-            file_objs = [create_file_from_path(f) for f in cpp_files]
-            snippets = slicer.extract_snippets(file_objs, "cpp")
+        slicer = Slicer()
+        file_objs = [create_file_from_path(f) for f in cpp_files]
+        snippets = slicer.extract_snippets(file_objs, "cpp")
 
-            # Should extract some snippets
-            assert len(snippets) >= 0  # May not find functions in all test files
-
-        except RuntimeError:
-            pytest.skip("Tree-sitter setup not available")
+        # Should extract some snippets
+        assert len(snippets) >= 0  # May not find functions in all test files
 
     def test_java_multi_file_analysis(self) -> None:
         """Test analyzing a multi-file Java project."""
@@ -730,16 +744,12 @@ class TestMultiFileIntegration:
         assert "Models.java" in filenames
         assert "Utils.java" in filenames
 
-        try:
-            slicer = Slicer()
-            file_objs = [create_file_from_path(f) for f in java_files]
-            snippets = slicer.extract_snippets(file_objs, "java")
+        slicer = Slicer()
+        file_objs = [create_file_from_path(f) for f in java_files]
+        snippets = slicer.extract_snippets(file_objs, "java")
 
-            # Should extract some snippets
-            assert len(snippets) >= 0  # May not find functions in all test files
-
-        except RuntimeError:
-            pytest.skip("Tree-sitter setup not available")
+        # Should extract some snippets
+        assert len(snippets) >= 0  # May not find functions in all test files
 
     def test_all_languages_have_examples(self) -> None:
         """Test that all supported languages have example data."""
@@ -816,24 +826,20 @@ class TestMultiFileIntegration:
         python_dir = self.get_data_path() / "python"
         py_files = list(python_dir.glob("*.py"))
 
-        try:
-            slicer = Slicer()
-            file_objs = [create_file_from_path(f) for f in py_files]
-            snippets = slicer.extract_snippets(file_objs, "python")
+        slicer = Slicer()
+        file_objs = [create_file_from_path(f) for f in py_files]
+        snippets = slicer.extract_snippets(file_objs, "python")
 
-            # Should extract some snippets
-            assert len(snippets) >= 3
+        # Should extract some snippets
+        assert len(snippets) >= 3
 
-            # Check that snippets contain function definitions
-            function_defs_found = 0
-            for snippet in snippets:
-                if "def " in snippet.original_text():
-                    function_defs_found += 1
+        # Check that snippets contain function definitions
+        function_defs_found = 0
+        for snippet in snippets:
+            if "def " in snippet.original_text():
+                function_defs_found += 1
 
-            assert function_defs_found >= 3
-
-        except RuntimeError:
-            pytest.skip("Tree-sitter setup not available")
+        assert function_defs_found >= 3
 
 
 class TestErrorHandling:
@@ -882,6 +888,91 @@ class TestErrorHandling:
                 assert isinstance(snippets, list)
             except UnicodeDecodeError:
                 pytest.fail("UnicodeDecodeError should not be raised for binary files")
-            except RuntimeError:
-                # Tree-sitter setup issues are acceptable
-                pytest.skip("Tree-sitter setup not available")
+
+    def test_file_extension_validation_for_language(self) -> None:
+        """Test only files with matching extensions are processed for each language."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Create files with different extensions
+            py_file = Path(tmp_dir, "test.py")
+            py_file.write_text("def test(): pass")
+
+            js_file = Path(tmp_dir, "test.js")
+            js_file.write_text("function test() {}")
+
+            png_file = Path(tmp_dir, "image.png")
+            png_file.write_bytes(b"fake png data")
+
+            txt_file = Path(tmp_dir, "readme.txt")
+            txt_file.write_text("This is just text")
+
+            # Test Python processing - should only accept .py files
+            slicer = Slicer()
+            py_file_obj = create_file_from_path(py_file)
+            js_file_obj = create_file_from_path(js_file)
+            png_file_obj = create_file_from_path(png_file)
+            txt_file_obj = create_file_from_path(txt_file)
+
+            # Test that Python slicer rejects non-Python files
+            with pytest.raises(ValueError, match="does not match language python"):
+                slicer.extract_snippets([js_file_obj], "python")
+
+            with pytest.raises(ValueError, match="does not match language python"):
+                slicer.extract_snippets([png_file_obj], "python")
+
+            with pytest.raises(ValueError, match="does not match language python"):
+                slicer.extract_snippets([txt_file_obj], "python")
+
+            # Test that Python slicer accepts Python files
+            snippets = slicer.extract_snippets([py_file_obj], "python")
+            assert isinstance(snippets, list)
+
+            # Test JavaScript processing - should only accept .js files
+            with pytest.raises(ValueError, match="does not match language javascript"):
+                slicer.extract_snippets([py_file_obj], "javascript")
+
+            with pytest.raises(ValueError, match="does not match language javascript"):
+                slicer.extract_snippets([png_file_obj], "javascript")
+
+            # Test that JavaScript slicer accepts JavaScript files
+            snippets = slicer.extract_snippets([js_file_obj], "javascript")
+            assert isinstance(snippets, list)
+
+    def test_mixed_files_with_language_filtering(self) -> None:
+        """Test that mixed file types are filtered correctly for each language."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Create files of different types
+            py_file = Path(tmp_dir, "script.py")
+            py_file.write_text("def hello(): print('hello')")
+
+            js_file = Path(tmp_dir, "script.js")
+            js_file.write_text("function hello() { console.log('hello'); }")
+
+            html_file = Path(tmp_dir, "index.html")
+            html_file.write_text("<html><body>Hello</body></html>")
+
+            # Create file objects
+            py_file_obj = create_file_from_path(py_file)
+            js_file_obj = create_file_from_path(js_file)
+            html_file_obj = create_file_from_path(html_file)
+
+            slicer = Slicer()
+
+            # Test that we can't mix file types within a single language request
+            with pytest.raises(ValueError, match="does not match language python"):
+                slicer.extract_snippets([py_file_obj, js_file_obj], "python")
+
+            with pytest.raises(ValueError, match="does not match language python"):
+                slicer.extract_snippets([py_file_obj, html_file_obj], "python")
+
+            with pytest.raises(ValueError, match="does not match language javascript"):
+                slicer.extract_snippets([js_file_obj, py_file_obj], "javascript")
+
+            # Test that processing single file types works
+            py_snippets = slicer.extract_snippets([py_file_obj], "python")
+            assert isinstance(py_snippets, list)
+
+            js_snippets = slicer.extract_snippets([js_file_obj], "javascript")
+            assert isinstance(js_snippets, list)
+
+            html_snippets = slicer.extract_snippets([html_file_obj], "html")
+            assert isinstance(html_snippets, list)
