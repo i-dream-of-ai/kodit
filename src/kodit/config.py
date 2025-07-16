@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import click
+import structlog
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import (
     BaseSettings,
@@ -189,7 +190,12 @@ class AppContext(BaseSettings):
     periodic_sync: PeriodicSyncConfig = Field(
         default=PeriodicSyncConfig(), description="Periodic sync configuration"
     )
+    api_tokens: list[str] = Field(
+        default_factory=list,
+        description="Comma-separated list of valid API tokens",
+    )
     _db: Database | None = None
+    _log = structlog.get_logger(__name__)
 
     def model_post_init(self, _: Any) -> None:
         """Post-initialization hook."""
