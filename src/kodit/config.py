@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar
 
 import click
 import structlog
@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import (
     BaseSettings,
     EnvSettingsSource,
+    NoDecode,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
 )
@@ -190,10 +191,24 @@ class AppContext(BaseSettings):
     periodic_sync: PeriodicSyncConfig = Field(
         default=PeriodicSyncConfig(), description="Periodic sync configuration"
     )
-    api_tokens: list[str] = Field(
+    api_keys: Annotated[list[str], NoDecode] = Field(
         default_factory=list,
-        description="Comma-separated list of valid API tokens",
+        description="Comma-separated list of valid API keys (e.g. 'key1,key2')",
     )
+
+    @field_validator("api_keys", mode="before")
+    @classmethod
+    def parse_api_keys(cls, v: Any) -> list[str]:
+        """Parse API keys from CSV format."""
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            # Split by comma and strip whitespace
+            return [key.strip() for key in v.strip().split(",") if key.strip()]
+        return v
+
     _db: Database | None = None
     _log = structlog.get_logger(__name__)
 
