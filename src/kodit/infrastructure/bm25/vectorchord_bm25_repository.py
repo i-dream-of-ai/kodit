@@ -70,6 +70,9 @@ UPDATE_QUERY = f"""
 UPDATE {TABLE_NAME}
 SET embedding = tokenize(passage, '{TOKENIZER_NAME}')
 """  # noqa: S608
+# https://github.com/tensorchord/VectorChord-bm25:
+# We intentionally make it negative so that you can use the
+# default order by to get the most relevant documents first.
 SEARCH_QUERY = f"""
     SELECT
         snippet_id,
@@ -185,7 +188,7 @@ class VectorChordBM25Repository(BM25Repository):
 
     async def search(self, request: SearchRequest) -> list[SearchResult]:
         """Search documents using BM25."""
-        if not request.query or request.query == "":
+        if not request.query or request.query.strip() == "":
             return []
 
         if request.snippet_ids is not None:
