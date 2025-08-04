@@ -104,6 +104,17 @@ if wait_for_server; then
         -H "Content-Type: application/json" \
         -d '{"data": {"type": "search", "attributes": {"keywords": ["test"], "code": "def", "text": "function"}}, "limit": 5}' \
         || echo "Search API test failed"
+    
+    # Test DELETE /api/v1/indexes/$INDEX_ID (delete index)
+    if [[ "$INDEX_RESPONSE" == "Create index test failed" ]]; then
+        echo "Delete index test skipped"
+    else
+        INDEX_ID=$(echo "$INDEX_RESPONSE" | jq -r '.data.id')
+        echo "Testing DELETE /api/v1/indexes/$INDEX_ID"
+        curl -s -f -X DELETE http://127.0.0.1:8080/api/v1/indexes/$INDEX_ID \
+            -H "Content-Type: application/json" \
+            || echo "Delete index test failed"
+    fi
 fi
 
 # Clean up: stop the server
