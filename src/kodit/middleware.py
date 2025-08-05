@@ -53,6 +53,7 @@ async def logging_middleware(request: Request, call_next: Callable) -> Response:
                 "client_host": client_host,
                 "client_port": client_port,
             },
+            headers=dict(request.headers),
             network={"client": {"ip": client_host, "port": client_port}},
             duration=process_time,
         )
