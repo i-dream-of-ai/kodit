@@ -4,16 +4,18 @@ import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 from urllib.parse import urlparse, urlunparse
 
 from pydantic import AnyUrl, BaseModel
 
 from kodit.domain.value_objects import (
     FileProcessingStatus,
+    QueuePriority,
     SnippetContent,
     SnippetContentType,
     SourceType,
+    TaskType,
 )
 from kodit.utils.path_utils import path_from_uri
 
@@ -274,3 +276,48 @@ class SnippetWithContext:
     file: File
     authors: list[Author]
     snippet: Snippet
+
+
+class Task(BaseModel):
+    """Represents an item in the queue waiting to be processed.
+
+    If the item exists, that means it is in the queue and waiting to be processed. There
+    is no status associated.
+    """
+
+    id: str  # Is a unique key to deduplicate items in the queue
+    type: TaskType  # Task type
+    priority: int  # Priority (higher number = higher priority)
+    payload: dict[str, Any]  # Task-specific data
+
+    created_at: datetime | None = None  # Is populated by repository
+    updated_at: datetime | None = None  # Is populated by repository
+
+    @staticmethod
+    def create(task_type: TaskType, priority: int, payload: dict[str, Any]) -> "Task":
+        """Create a task."""
+        return Task(
+            id=Task._create_id(task_type, payload),
+            type=task_type,
+            priority=priority,
+            payload=payload,
+        )
+
+    @staticmethod
+    def _create_id(task_type: TaskType, payload: dict[str, Any]) -> str:
+        """Create a unique id for a task."""
+        if task_type == TaskType.INDEX_UPDATE:
+            return str(payload["index_id"])
+
+        raise ValueError(f"Unknown task type: {task_type}")
+
+    @staticmethod
+    def create_index_update_task(
+        index_id: int, priority: QueuePriority = QueuePriority.USER_INITIATED
+    ) -> "Task":
+        """Create an index update task."""
+        return Task.create(
+            task_type=TaskType.INDEX_UPDATE,
+            priority=priority.value,
+            payload={"index_id": index_id},
+        )

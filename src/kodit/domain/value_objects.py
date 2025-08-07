@@ -649,3 +649,16 @@ class FunctionDefinition:
     qualified_name: str
     start_byte: int
     end_byte: int
+
+
+class TaskType(Enum):
+    """Task type."""
+
+    INDEX_UPDATE = 1
+
+
+class QueuePriority(IntEnum):
+    """Queue priority."""
+
+    BACKGROUND = 10
+    USER_INITIATED = 50
